@@ -11,38 +11,55 @@ from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app import auth as auth_module
 from app import database
 from app.call_manager import CallManager, CallSession
 from app.config import settings
 from app.engine import VoiceEngine
+from app.platform_api import router as platform_router
+from app.scheduler import Scheduler
 from app.security import ValidationError, is_local_origin
+from app.telephony.router import router as telephony_router
+from app.telephony.service import TelephonyService
 from app.version import __version__
 
 engine = VoiceEngine()
 manager = CallManager(engine)
+telephony_service = TelephonyService(engine)
+scheduler = Scheduler(telephony_service)
+telephony_service.scheduler = scheduler
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await engine.start()
-    yield
-    await manager.shutdown()
-    await engine.shutdown()
+    await asyncio.to_thread(auth_module.seed_default_users)
+    await scheduler.start()
+    try:
+        yield
+    finally:
+        await scheduler.stop()
+        await manager.shutdown()
+        await engine.shutdown()
 
 
 app = FastAPI(
     title="CareSpeak VoiceLink",
     version=__version__,
-    description="Local-only AI voice line. No cloud inference, no telephony billing.",
+    description="Provider-connected AI care communication and escalation platform.",
     lifespan=lifespan,
 )
 app.state.engine = engine
 app.state.manager = manager
+app.state.service = telephony_service
+app.state.scheduler = scheduler
+app.include_router(telephony_router)
+app.include_router(platform_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
     allow_origin_regex=settings.allowed_origin_regex,
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )

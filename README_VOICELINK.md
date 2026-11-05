@@ -10,8 +10,17 @@ local sherpa-onnx voice speaks it back — all on this computer. Nothing is sent
 to a cloud API, and there is no billing account of any kind.
 
 - Desktop UI: <http://127.0.0.1:3000/voicelink>
+- Nurse/admin dashboard: <http://127.0.0.1:3000/dashboard>
 - Phone UI (same Wi-Fi): `https://<your-LAN-IP>:3443/voicelink`
 - Backend API: <http://127.0.0.1:8000> (docs at `/docs`)
+
+VoiceLink now also ships a **care communication and escalation platform**: a
+provider-agnostic telephony layer (Exotel, Twilio, or an honest mock), real
+inbound/outbound call handling, an escalation engine, permission-controlled
+family access, scheduled follow-ups, and a nurse/admin dashboard. Everything
+above still works exactly as before. See [`TELEPHONY_SETUP.md`](TELEPHONY_SETUP.md),
+[`PROVIDER_DECISION.md`](PROVIDER_DECISION.md), [`SECURITY.md`](SECURITY.md) and
+[`OPERATIONS.md`](OPERATIONS.md).
 
 ---
 
@@ -91,10 +100,36 @@ automatically when the PC's LAN address changes. Certificate and key files live 
 `backend/runtime/` and are git-ignored. The gateway refuses any request that does
 not come from a private (`127.x`, `10.x`, `192.168.x`, `172.16–31.x`) address.
 
-> **Honest limit:** this is real calling between devices on your own network. It
-> is **not** a telephone (PSTN) call. Placing a call to a mobile or landline
-> number requires a paid carrier/SIP trunk, so it is impossible under the ₹0
-> policy. See [`ZERO_COST_POLICY.md`](ZERO_COST_POLICY.md).
+> **Honest limit:** calling between browser tabs or devices on your own network
+> is real, and it costs nothing. Calling an ordinary **telephone (PSTN)** number
+> requires a paid carrier (Exotel primary, Twilio secondary). VoiceLink supports
+> that path fully, but it is the operator's responsibility to supply credentials,
+> a verified number, and a public HTTPS callback. With no credentials the
+> platform deliberately runs in **mock** mode and never places a real call. See
+> [`TELEPHONY_SETUP.md`](TELEPHONY_SETUP.md).
+
+---
+
+## Care platform (telephony + dashboard)
+
+Beyond the browser dialer, VoiceLink provides a durable care workflow. The
+browser demo is unchanged; the platform is additive.
+
+| Area | Implemented |
+|---|---|
+| Telephony abstraction | `startOutboundCall`, `handleInboundCall`, `getCallStatus`, `endCall`, `sendMessage`, `verifyWebhook`, `handleProviderEvent` — one interface, real adapters + a mock |
+| Providers | Exotel (primary, India, raw PCM AgentStream), Twilio (secondary, µ-law Media Streams, signed webhooks), mock (offline) |
+| Honest status | Every surface distinguishes **live** / **configured-unverified** / **mock** / **unavailable** / **disabled**; “accepted” is never shown as “delivered” |
+| Real calls | Outbound nurse→patient-AI calls and inbound calls where the carrier supports them; bidirectional audio bridged to the same local ASR/LLM/TTS engines, with barge-in and stale-response cancellation |
+| Escalations | Deterministic rules + a bounded language check with confirmation; routine / follow-up / urgent / emergency; durable records, nurse notification, retry and backup, unacknowledged alerts; immediate danger is routed to the emergency number |
+| Messages | SMS / voice / AI messages with real delivery states (sent **is not** delivered); quiet hours and rate limits |
+| Family access | Mode 1 (family ↔ AI within granted scope) and Mode 2 (approval-gated direct call), both expiring and revocable |
+| Scheduling | Durable server-side follow-ups with quiet hours, retry/backoff, and no duplicate calls |
+| Security | Dashboard auth, RBAC, per-patient access, number verification, short-lived single-use challenges, signed/authenticated webhooks, replay protection, idempotency, audit hash chain |
+| Dashboard | Overview, Patient workspace, Escalation center, Family access, Provider settings, Audit & reports |
+
+The dashboard reads only real backend state; nothing is hard-coded. See the docs
+linked above for setup, security and operations.
 
 ---
 
@@ -130,6 +165,16 @@ not come from a private (`127.x`, `10.x`, `192.168.x`, `172.16–31.x`) address.
 - `src/app/voicelink/page.tsx` and `src/hooks/useVoiceCall.ts` — the client.
 - `public/worklets/voicelink-capture.js` — native-rate → 16 kHz resampling worklet.
 
+Platform modules:
+
+- `backend/app/telephony/` — provider interface, `registry` (selection + honest mode), `exotel`/`twilio`/`mock` adapters, `audio` (PCM/µ-law + resampling), `webhooks` (signature + replay + idempotency), `router` (webhook + media WebSocket), `service` (orchestration), `bridge` (carrier audio ↔ local AI), `numbers`, `models` (state machines).
+- `backend/app/escalation.py` — deterministic + bounded-language classification.
+- `backend/app/scheduler.py` — durable leased jobs with retry/backoff.
+- `backend/app/auth.py` — scrypt passwords, sessions, RBAC, audit.
+- `backend/app/secrets_store.py` — git-ignored secret storage, never returned.
+- `backend/app/platform_api.py` — dashboard REST API.
+- `src/lib/platformApi.ts` and `src/components/dashboard/*` — the dashboard client and panels.
+
 The WebSocket protocol is JSON control messages (`start_call`, `text_input`,
 `playback_done`, `ptt_start`/`ptt_end`, `barge_in`, `muted`, `end_call`) plus raw
 binary frames of little-endian 16-bit 16 kHz mono PCM.
@@ -160,8 +205,20 @@ purely local.
 
 ```powershell
 cd backend
-.\.venv\Scripts\python.exe -m pytest tests -q     # unit tests
+.\.venv\Scripts\python.exe -m pytest tests -q     # backend: 36 tests
+cd ..
+npm test                                          # frontend: 58 tests
 ```
+
+The backend suite runs entirely against the deterministic **mock** provider and
+an isolated database; it never places a real call. It covers number
+normalisation/masking, RBAC, consent, provider-config validation, call and
+message transitions, duplicate/out-of-order webhooks, signature verification,
+idempotency, challenge expiry/replay, family approval/revocation, escalation
+thresholds, retry/backoff, the scheduler, provider failure/recovery and
+persistence across a restart. Real end-to-end PSTN testing requires credentials
+and a verified number and is performed manually (see
+[`TELEPHONY_SETUP.md`](TELEPHONY_SETUP.md)).
 
 The health endpoint is a live functional check, not a hard-coded indicator:
 

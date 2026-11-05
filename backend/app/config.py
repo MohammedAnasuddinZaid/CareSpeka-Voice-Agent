@@ -158,7 +158,54 @@ class Settings:
     ws_max_message_bytes: int = _int_env("VOICELINK_WS_MAX_MESSAGE_BYTES", 1024 * 1024)
     health_cache_seconds: float = _float_env("VOICELINK_HEALTH_CACHE_S", 8.0)
     llm_warmup: bool = _bool_env("VOICELINK_LLM_WARMUP", True)
-    version: str = "1.0.0"
+    version: str = "2.0.0"
+
+    # --- telephony -----------------------------------------------------
+    # "auto" picks Exotel, then Twilio, then the mock provider, in that order.
+    # Set to exotel|twilio|mock to force one adapter.  The mock never claims to
+    # be a real carrier: its operating mode is always "mock".
+    telephony_provider: str = _env("TELEPHONY_PROVIDER", "auto")
+    telephony_enabled: bool = _bool_env("TELEPHONY_ENABLED", True)
+    default_region: str = _env("VOICELINK_REGION", "IN")
+    emergency_number: str = _env("VOICELINK_EMERGENCY_NUMBER", "112")
+    # The provider must reach this base over the public internet (HTTPS/WSS).
+    # A private LAN address is never reachable from a carrier.
+    public_base_url: str = _env("PUBLIC_BASE_URL", "")
+    webhook_base_url: str = _env("TELEPHONY_WEBHOOK_BASE_URL", "")
+    exotel_subdomain: str = _env("EXOTEL_SUBDOMAIN", "api.in.exotel.com")
+    exotel_caller_id: str = _env("EXOTEL_CALLER_ID", "")
+    exotel_sender_id: str = _env("EXOTEL_SENDER_ID", "EXOTEL")
+    exotel_dlt_entity_id: str = _env("EXOTEL_DLT_ENTITY_ID", "")
+    exotel_dlt_template_id: str = _env("EXOTEL_DLT_TEMPLATE_ID", "")
+    twilio_phone_number: str = _env("TWILIO_PHONE_NUMBER", "")
+    twilio_messaging_number: str = _env("TWILIO_MESSAGING_NUMBER", "")
+    telephony_request_timeout_s: float = _float_env("TELEPHONY_REQUEST_TIMEOUT_S", 20.0)
+    telephony_record_calls: bool = _bool_env("TELEPHONY_RECORD_CALLS", False)
+
+    # --- dashboard / auth ---------------------------------------------
+    session_minutes: int = _int_env("VOICELINK_SESSION_MINUTES", 480)
+    login_max_attempts: int = _int_env("VOICELINK_LOGIN_MAX_ATTEMPTS", 5)
+    login_lockout_seconds: int = _int_env("VOICELINK_LOGIN_LOCKOUT_S", 300)
+    verification_ttl_seconds: int = _int_env("VOICELINK_VERIFICATION_TTL_S", 600)
+    verification_max_attempts: int = _int_env("VOICELINK_VERIFICATION_MAX_ATTEMPTS", 5)
+    family_request_ttl_seconds: int = _int_env("VOICELINK_FAMILY_REQUEST_TTL_S", 86400)
+    require_dashboard_auth: bool = _bool_env("VOICELINK_REQUIRE_AUTH", True)
+
+    # --- scheduler / escalation ---------------------------------------
+    scheduler_poll_seconds: float = _float_env("VOICELINK_SCHEDULER_POLL_S", 5.0)
+    job_lease_seconds: int = _int_env("VOICELINK_JOB_LEASE_S", 120)
+    job_max_attempts: int = _int_env("VOICELINK_JOB_MAX_ATTEMPTS", 4)
+    escalation_ack_timeout_seconds: int = _int_env("VOICELINK_ESCALATION_ACK_TIMEOUT_S", 180)
+    outbound_max_retries: int = _int_env("VOICELINK_OUTBOUND_MAX_RETRIES", 2)
+    outbound_retry_backoff_seconds: int = _int_env("VOICELINK_OUTBOUND_RETRY_BACKOFF_S", 60)
+    quiet_hours_enabled: bool = _bool_env("VOICELINK_QUIET_HOURS", True)
+    quiet_hours_start: int = _int_env("VOICELINK_QUIET_START_HOUR", 21)
+    quiet_hours_end: int = _int_env("VOICELINK_QUIET_END_HOUR", 7)
+    rate_limit_calls_per_hour: int = _int_env("VOICELINK_RATE_LIMIT_CALLS_PER_HOUR", 10)
+    rate_limit_messages_per_hour: int = _int_env("VOICELINK_RATE_LIMIT_MESSAGES_PER_HOUR", 20)
+
+    # --- safety --------------------------------------------------------
+    seed_demo_users: bool = _bool_env("VOICELINK_SEED_DEMO_USERS", True)
 
     @property
     def phone_url(self) -> str:
