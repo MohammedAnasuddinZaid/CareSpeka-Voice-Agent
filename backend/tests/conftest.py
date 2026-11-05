@@ -14,7 +14,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-_TMP = Path(tempfile.mkdtemp(prefix="voicelink-tests-"))
+# Keep every test artifact off the system drive when the operator asks for it.
+# On this machine the suite is normally run with
+#   VOICELINK_TEST_TMPDIR=D:\voicelink-test-tmp
+# so temporary databases and secrets never accumulate on C:.
+_TMP_ROOT = os.getenv("VOICELINK_TEST_TMPDIR")
+if _TMP_ROOT:
+    Path(_TMP_ROOT).mkdir(parents=True, exist_ok=True)
+_TMP = Path(tempfile.mkdtemp(prefix="voicelink-tests-", dir=_TMP_ROOT or None))
 
 os.environ.setdefault("VOICELINK_DB_PATH", str(_TMP / "test.db"))
 os.environ.setdefault("VOICELINK_SECRETS_PATH", str(_TMP / "provider_secrets.json"))

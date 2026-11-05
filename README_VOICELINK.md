@@ -204,10 +204,11 @@ purely local.
 ## Testing
 
 ```powershell
+$env:VOICELINK_TEST_TMPDIR = 'D:\voicelink-test-tmp'   # keep artifacts off C:
 cd backend
-.\.venv\Scripts\python.exe -m pytest tests -q     # backend: 36 tests
+.\.venv\Scripts\python.exe -m pytest tests -q           # backend: 36 tests
 cd ..
-npm test                                          # frontend: 58 tests
+npm test                                                # frontend: 58 tests
 ```
 
 The backend suite runs entirely against the deterministic **mock** provider and

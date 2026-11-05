@@ -75,7 +75,9 @@ check `backend/logs/backend.err.log`.
 
 - Source stays in the repository (on `C:` for this machine).
 - New dependency caches, npm cache and temporary files are kept on `D:`
-  (`D:\npm-cache`) to avoid filling the system drive.
+  (`D:\npm-cache`) to avoid filling the system drive. The backend test suite
+  accepts `VOICELINK_TEST_TMPDIR` (e.g. `D:\voicelink-test-tmp`) so its temporary
+  databases and secrets stay off `C:`.
 - `backend/models/`, `backend/data/`, `backend/logs/`, `backend/runtime/` and
   `.next/` are git-ignored.
 
