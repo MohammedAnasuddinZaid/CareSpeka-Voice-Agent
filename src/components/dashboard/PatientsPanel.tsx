@@ -227,7 +227,7 @@ function CallAndMessage({
     setBusy("call");
     setResult(null);
     try {
-      const res = await startCall(patient.id, purpose);
+      const res = await startCall(patient.id, purpose, contact?.id);
       if (res.ok) {
         const simulated = res.mode === "mock";
         setResult({
@@ -494,11 +494,11 @@ function ContactRow({ contact, writable, onChange }: { contact: Contact; writabl
 
       {verifying ? (
         <div className="mt-2 rounded-lg border border-[#ececec] bg-[#fafafa] p-2">
-          {delivery && !delivery.sent ? (
+          {delivery && delivery.simulated ? (
             <Notice tone="warning">
               <span className="text-xs">
-                No real SMS was sent ({delivery.mode}). This simulated code is shown so the flow can be tested
-                offline: <span className="font-mono font-semibold">{delivery.simulated}</span>
+                No real SMS was sent (provider mode: {delivery.mode}). This simulated code is shown so the flow can be
+                tested offline: <span className="font-mono font-semibold">{delivery.simulated}</span>
               </span>
             </Notice>
           ) : (

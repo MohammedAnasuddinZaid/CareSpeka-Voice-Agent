@@ -347,8 +347,11 @@ async def start_verification(
     )
 
     provider = registry.get_provider()
-    delivery = {"sent": False, "mode": provider.operating_mode(), "detail": "No provider available."}
-    if provider.capabilities().sms and provider.is_configured():
+    # A mock (or a real provider without credentials) must never be treated as
+    # having delivered an SMS.  Only a real, configured carrier counts.
+    real_provider = provider.name in {"exotel", "twilio"} and provider.is_configured()
+    delivery = {"sent": False, "mode": provider.operating_mode(), "detail": "No real carrier configured."}
+    if provider.capabilities().sms and real_provider:
         result = await provider.send_message(
             to_number=contact["phone_e164"],
             from_number=getattr(provider, "caller_id", "") or getattr(provider, "from_number", "") or None,
@@ -367,15 +370,16 @@ async def start_verification(
         audit, user, "contact.verify.start", entity_type="contact", entity_id=str(contact_id),
         patient_id=contact.get("patient_id"), detail={"channel": body.channel, "delivery": delivery},
     )
+    # Surface the code only when no real SMS was handed to a carrier, so the
+    # offline flow is testable without ever defeating real verification.
+    simulated_code = code if not (real_provider and delivery["sent"]) else None
     return {
         "ok": True,
         "challenge_id": challenge["id"],
         "phone_masked": contact.get("phone_masked"),
         "expires_at": challenge.get("expires_at"),
         "delivery": delivery,
-        # In mock/no-provider mode the code is surfaced so the flow is testable
-        # offline. It is marked so the UI never presents it as a real SMS.
-        "simulated_code": code if not delivery["sent"] else None,
+        "simulated_code": simulated_code,
     }
 
 
@@ -933,8 +937,17 @@ def _patient_contact(patient_id: int, contact_id: Optional[int]) -> Optional[dic
         if contact and contact.get("patient_id") == patient_id and contact.get("active"):
             return contact
         return None
-    contacts = database.list_contacts(patient_id)
+    contacts = [c for c in database.list_contacts(patient_id) if c.get("active")]
+    if not contacts:
+        return None
+    # Prefer a verified primary patient contact, then any patient contact.
     for contact in contacts:
-        if contact.get("role") == "patient" and contact.get("active"):
+        if contact.get("role") == "patient" and contact.get("is_primary") and contact.get("verification_status") == "verified":
             return contact
-    return contacts[0] if contacts else None
+    for contact in contacts:
+        if contact.get("role") == "patient" and contact.get("is_primary"):
+            return contact
+    for contact in contacts:
+        if contact.get("role") == "patient":
+            return contact
+    return contacts[0]

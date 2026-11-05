@@ -334,7 +334,11 @@ export function confirmVerify(contactId: number, code: string): Promise<{ ok: bo
 }
 
 // --- calls ------------------------------------------------------------------
-export function startCall(patientId: number, purpose = "nurse_to_patient_ai"): Promise<{
+export function startCall(
+  patientId: number,
+  purpose = "nurse_to_patient_ai",
+  contactId?: number,
+): Promise<{
   ok: boolean;
   call?: TelephonyCall;
   mode?: string;
@@ -344,7 +348,11 @@ export function startCall(patientId: number, purpose = "nurse_to_patient_ai"): P
   message?: string;
   duplicate?: boolean;
 }> {
-  return post("/api/platform/calls", { patient_id: patientId, purpose });
+  return post("/api/platform/calls", {
+    patient_id: patientId,
+    purpose,
+    contact_id: contactId ?? null,
+  });
 }
 
 export function endCall(callId: string): Promise<{ ok: boolean; call?: TelephonyCall }> {

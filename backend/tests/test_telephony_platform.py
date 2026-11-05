@@ -551,3 +551,70 @@ def test_api_audit_chain_is_intact(api_client):
     response = api_client.get("/api/platform/audit")
     assert response.status_code == 200
     assert response.json()["chain"]["ok"] is True
+
+
+def test_api_mock_verification_never_claims_sms_delivery(api_client):
+    contact = api_client.post(
+        "/api/platform/contacts",
+        json={
+            "patient_id": 1, "role": "patient", "display_name": "Asha Rao",
+            "phone": "09876543210", "is_primary": True,
+        },
+    ).json()["contact"]
+
+    started = api_client.post(
+        f"/api/platform/contacts/{contact['id']}/verify", json={"channel": "sms"},
+    )
+    assert started.status_code == 200, started.text
+    payload = started.json()
+    # A mock must never be reported as having delivered a real SMS.
+    assert payload["delivery"]["sent"] is False
+    assert payload["delivery"]["mode"] == "mock"
+    code = payload["simulated_code"]
+    assert code and len(code) == 6 and code.isdigit()
+
+    confirmed = api_client.post(
+        f"/api/platform/contacts/{contact['id']}/verify/confirm", json={"code": code},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["verified"] is True
+
+    contacts = api_client.get("/api/platform/contacts?patient_id=1").json()["contacts"]
+    stored = next(c for c in contacts if c["id"] == contact["id"])
+    assert stored["verification_status"] == "verified"
+
+
+def test_api_call_prefers_verified_primary_patient_contact(api_client):
+    secondary = api_client.post(
+        "/api/platform/contacts",
+        json={
+            "patient_id": 1, "role": "patient", "display_name": "Asha Rao",
+            "phone": "09876543210", "is_primary": False,
+        },
+    ).json()["contact"]
+    primary = api_client.post(
+        "/api/platform/contacts",
+        json={
+            "patient_id": 1, "role": "patient", "display_name": "Asha Rao",
+            "phone": "09876543211", "is_primary": True,
+        },
+    ).json()["contact"]
+    code = api_client.post(
+        f"/api/platform/contacts/{primary['id']}/verify", json={"channel": "sms"},
+    ).json()["simulated_code"]
+    api_client.post(
+        f"/api/platform/contacts/{primary['id']}/verify/confirm", json={"code": code},
+    )
+
+    # Without an explicit contact the verified primary patient contact wins.
+    call = api_client.post("/api/platform/calls", json={"patient_id": 1})
+    assert call.status_code == 200, call.text
+    assert call.json()["call"]["to_masked"].endswith("3211")
+
+    # An explicit contact_id is still honoured.
+    explicit = api_client.post(
+        "/api/platform/calls", json={"patient_id": 1, "contact_id": secondary["id"]},
+    )
+    assert explicit.status_code == 200, explicit.text
+    assert explicit.json()["call"]["to_masked"].endswith("3210")
+    assert explicit.json()["call"]["contact_id"] == secondary["id"]
