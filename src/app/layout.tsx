@@ -65,6 +65,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     { href: "/hand-mode", label: "Hand Mode" },
                     { href: "/eye-mode", label: "Eye Mode" },
                     { href: "/voicelink", label: "VoiceLink" },
+                    { href: "/care", label: "Web Voice Call (Demo)" },
                     { href: "/nurse-view", label: "Nurse Dashboard" },
                     { href: "/emergency", label: "Emergency" },
                   ].map((link) => (
