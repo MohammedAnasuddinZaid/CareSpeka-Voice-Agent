@@ -24,7 +24,7 @@ const nextConfig = {
               // http: is required for LAN IP cameras (MJPEG feeds are plain HTTP)
               "img-src 'self' data: blob: http: https:",
               "media-src 'self' blob: http: https:",
-              "connect-src 'self' https://cdn.jsdelivr.net https://storage.googleapis.com http: https:",
+              "connect-src 'self' https://cdn.jsdelivr.net https://storage.googleapis.com http: https: ws: wss:",
               "worker-src 'self' blob:",
               "object-src 'none'",
               "frame-ancestors 'self'",

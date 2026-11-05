@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, Menu, X, Hand, Eye, Activity, FileText, Info, AlertTriangle, Camera, ClipboardList, BedDouble } from "lucide-react";
+import { ChevronDown, Menu, X, Hand, Eye, Activity, FileText, Info, AlertTriangle, Camera, ClipboardList, BedDouble, Phone } from "lucide-react";
 import { SUPPORTED_LANGUAGES, SupportedLanguage } from "@/types";
 import { voiceAlert } from "@/lib/tts";
 import { t, type UIKey } from "@/lib/i18n";
@@ -12,6 +12,7 @@ import { useUiLanguage } from "@/hooks/useUiLanguage";
 const NAV_LINKS: { href: string; label: string; i18nKey?: UIKey; icon: typeof Hand; highlight?: boolean }[] = [
   { href: "/hand-mode", label: "Hand Mode", i18nKey: "handMode", icon: Hand },
   { href: "/eye-mode", label: "Eye Mode", i18nKey: "eyeMode", icon: Eye },
+  { href: "/voicelink", label: "VoiceLink", icon: Phone },
   { href: "/cctv", label: "CCTV", i18nKey: "cctv", icon: Camera },
   { href: "/nurse-view", label: "Nurse", i18nKey: "nurse", icon: Activity },
   { href: "/ward", label: "Ward", i18nKey: "ward", icon: BedDouble },

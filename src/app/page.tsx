@@ -2,7 +2,7 @@
 
 import { useRef } from "react";
 import { motion, useInView } from "framer-motion";
-import { ArrowRight, Hand, Eye, Volume2, Shield, Zap, Heart, CheckCircle, Sparkles, Activity, Users, Camera } from "lucide-react";
+import { ArrowRight, Hand, Eye, Volume2, Shield, Zap, Heart, CheckCircle, Sparkles, Activity, Users, Camera, PhoneCall } from "lucide-react";
 
 const fadeUp = {
   hidden: { opacity: 0, y: 24 },
@@ -250,6 +250,66 @@ export default function LandingPage() {
               <p className="text-[#6e6e6e] text-sm leading-relaxed max-w-xs mx-auto">{step.desc}</p>
             </motion.div>
           ))}
+        </div>
+      </Section>
+
+      {/* ── VoiceLink band ── */}
+      <Section>
+        <div className="relative overflow-hidden rounded-[2rem] border border-[#ececec] bg-white p-8 sm:p-12 shadow-[0_24px_60px_rgba(18,18,18,0.06)]">
+          <div className="absolute -right-20 -top-24 h-72 w-72 rounded-full bg-[#c63a22]/8 blur-3xl" />
+          <div className="relative grid gap-8 lg:grid-cols-[1.35fr_0.65fr] lg:items-center">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-[#c63a22]/15 bg-[#c63a22]/5 px-3.5 py-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-[#c63a22]">
+                <PhoneCall className="h-3.5 w-3.5" />
+                New · CareSpeak VoiceLink
+              </div>
+              <h2 className="mt-4 text-3xl sm:text-4xl font-bold text-[#1f1f1f] tracking-tight">
+                A private AI voice line, on your own laptop
+              </h2>
+              <p className="mt-3 max-w-2xl text-sm sm:text-base leading-relaxed text-[#6e6e6e]">
+                Dial extension CS-0000 and talk to Aria. Your microphone audio is
+                transcribed, answered and spoken back entirely on this computer —
+                then the same page opens on a phone over your Wi-Fi. No cloud API,
+                no telephony bill, no real patient data.
+              </p>
+              <div className="mt-6 flex flex-wrap gap-3">
+                <a href="/voicelink"
+                  className="group inline-flex items-center justify-center gap-2.5 rounded-2xl bg-[#c63a22] px-6 py-3.5 text-sm font-semibold text-white shadow-lg shadow-[#c63a22]/20 transition-all hover:bg-[#a32e1a] hover:-translate-y-0.5"
+                >
+                  <PhoneCall className="h-4 w-4" />
+                  Open the local dialer
+                  <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+                </a>
+                <a href="/voicelink#phone"
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#e4e1dd] bg-white px-6 py-3.5 text-sm font-semibold text-[#1f1f1f] transition hover:bg-[#faf9f7]"
+                >
+                  Phone setup
+                </a>
+              </div>
+            </div>
+            <div className="rounded-2xl border border-[#ececec] bg-[#faf9f7] p-5">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#9a9a9a]">
+                What runs locally
+              </div>
+              <ul className="mt-3 space-y-2.5 text-sm text-[#4c4c4c]">
+                {[
+                  "whisper.cpp speech recognition",
+                  "Qwen 2.5 via Ollama",
+                  "sherpa-onnx VITS speech",
+                  "Silero voice activity detection",
+                  "SQLite call transcript",
+                ].map((item) => (
+                  <li key={item} className="flex items-center gap-2">
+                    <CheckCircle className="h-4 w-4 shrink-0 text-[#22a67e]" />
+                    {item}
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800">
+                ₹0 inference · LAN calling · browser only
+              </div>
+            </div>
+          </div>
         </div>
       </Section>
 
