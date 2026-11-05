@@ -40,6 +40,8 @@ class TwilioProvider(TelephonyProvider):
     name = "twilio"
     mode = ProviderMode.REAL
     media_format = AudioFormat(encoding="mulaw", sample_rate=8000, frame_ms=20)
+    # Twilio Media Streams use camelCase ``streamSid`` in both directions.
+    stream_id_field = "streamSid"
 
     def __init__(
         self,
@@ -315,6 +317,7 @@ def _parse_params(content_type: str, body: bytes) -> dict[str, str]:
 def _map_twilio_call_status(status: Any) -> str:
     return {
         "queued": "queued",
+        "accepted": "queued",
         "initiated": "dialing",
         "ringing": "ringing",
         "in-progress": "connected",

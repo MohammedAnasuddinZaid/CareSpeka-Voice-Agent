@@ -80,6 +80,7 @@ class TelephonyBridge:
         persona: str = "patient",
         demo_mode: bool = True,
         on_escalation: Optional[EscalationHook] = None,
+        outbound_chunk_bytes: int = 0,
         max_turns: int = 40,
         max_seconds: int = 1800,
     ) -> None:
@@ -93,6 +94,7 @@ class TelephonyBridge:
         self.persona = persona
         self.demo_mode = demo_mode
         self.on_escalation = on_escalation
+        self.outbound_chunk_bytes = max(0, int(outbound_chunk_bytes or 0))
         self.max_turns = max_turns
         self.max_seconds = max_seconds
 
@@ -326,18 +328,46 @@ class TelephonyBridge:
         pcm, rate = wav_pcm16(result.wav)
         encoded = self.media_format.encode_from_ai(pcm, rate)
         frame_bytes = self._frame_bytes()
+        bytes_per_sample = self._bytes_per_sample()
+        # Round the provider's minimum chunk up to a whole number of frames so
+        # every payload stays aligned with the 20 ms frame cadence.
+        chunk_size = max(frame_bytes, self.outbound_chunk_bytes or frame_bytes)
+        if chunk_size % frame_bytes:
+            chunk_size += frame_bytes - (chunk_size % frame_bytes)
+        pending = bytearray()
         first = True
         for frame in iter_frames(encoded, frame_bytes):
             if self.closed:
                 return
             if self._cancel.is_set():
                 return
-            await self.send_audio(frame)
+            pending.extend(frame)
+            # Carriers differ: Twilio accepts 20 ms frames, Exotel requires
+            # chunks of at least 3200 bytes.  Batch up to the provider's floor.
+            if len(pending) < chunk_size:
+                continue
+            await self.send_audio(bytes(pending))
             if first and started is not None:
-                self.metrics.first_audio_ms.append(int((time.perf_counter() - started) * 1000))
+                self.metrics.first_audio_ms.append(
+                    int((time.perf_counter() - started) * 1000)
+                )
                 first = False
             # Pace playback so the carrier buffer does not overrun.
-            await asyncio.sleep(frame_bytes / (self.media_format.sample_rate * self._bytes_per_sample()))
+            await asyncio.sleep(len(pending) / (self.media_format.sample_rate * bytes_per_sample))
+            pending.clear()
+        if pending:
+            if self.outbound_chunk_bytes:
+                # Exotel requires the final chunk to respect the same minimum
+                # size and 320-byte multiple.  Pad with codec silence.
+                pad = chunk_size - len(pending)
+                if pad > 0:
+                    silence = b"\x00" if self.media_format.encoding == "pcm16" else b"\xff"
+                    pending.extend(silence * pad)
+            await self.send_audio(bytes(pending))
+            if first and started is not None:
+                self.metrics.first_audio_ms.append(
+                    int((time.perf_counter() - started) * 1000)
+                )
 
     def _bytes_per_sample(self) -> int:
         return 1 if self.media_format.encoding in {"mulaw", "alaw"} else 2

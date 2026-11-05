@@ -8,9 +8,10 @@ compliance claims** and uses no home-grown cryptography.
 - Passwords are hashed with **scrypt** (`hashlib.scrypt`) using a per-password
   random salt. Plaintext passwords are never stored.
 - Sessions use an opaque, random token in an `httpOnly`, `SameSite=Lax` cookie
-  (`voicelink_session`); the cookie is marked `Secure` when `PUBLIC_BASE_URL` is
-  HTTPS. Sessions expire after `VOICELINK_SESSION_MINUTES` (default 480) and are
-  invalidated on sign-out.
+  (`voicelink_session`); the cookie is marked `Secure` when the request itself
+  arrived over HTTPS (directly or via `X-Forwarded-Proto`), so a public tunnel
+  does not force `Secure` onto the plain-HTTP local dashboard. Sessions expire
+  after `VOICELINK_SESSION_MINUTES` (default 480) and are invalidated on sign-out.
 - Repeated failed sign-ins trigger a lockout (`VOICELINK_LOGIN_MAX_ATTEMPTS`
   then `VOICELINK_LOGIN_LOCKOUT_S`).
 - Sign-in failures do not reveal whether a username exists (enumeration
@@ -101,6 +102,14 @@ compliance claims** and uses no home-grown cryptography.
   public origin cannot pass the configured origin regex.
 - Carriers reach the backend only through the operator-provided public HTTPS
   endpoint. The local port must never be exposed directly.
+- When traffic arrives through a tunnel or reverse proxy (Cloudflare headers, or
+  a `Host` equal to the configured public base), only `/api/telephony/*` is
+  served; the dashboard, transcript API and data routes return `404`. This is
+  controlled by `VOICELINK_PUBLIC_SURFACE_TELEPHONY_ONLY` (default `true`) and
+  should only be disabled on a deployment with its own access control.
+- A quick-tunnel URL is disposable and unauthenticated at the network edge; it
+  exposes nothing but the carrier callback surface, and it dies with the tunnel
+  process.
 
 ## Out of scope / not claimed
 

@@ -181,6 +181,12 @@ class Settings:
     twilio_messaging_number: str = _env("TWILIO_MESSAGING_NUMBER", "")
     telephony_request_timeout_s: float = _float_env("TELEPHONY_REQUEST_TIMEOUT_S", 20.0)
     telephony_record_calls: bool = _bool_env("TELEPHONY_RECORD_CALLS", False)
+    # When traffic arrives through a public tunnel/proxy, only the carrier
+    # callback surface is exposed.  This keeps the dashboard, transcript API and
+    # database endpoints unreachable from the internet.
+    public_surface_telephony_only: bool = _bool_env(
+        "VOICELINK_PUBLIC_SURFACE_TELEPHONY_ONLY", True
+    )
 
     # --- dashboard / auth ---------------------------------------------
     session_minutes: int = _int_env("VOICELINK_SESSION_MINUTES", 480)

@@ -6,6 +6,7 @@ import json
 import time
 from contextlib import asynccontextmanager
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -63,6 +64,34 @@ app.add_middleware(
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+def _configured_public_host() -> str:
+    base = settings.webhook_base_url or settings.public_base_url
+    if not base:
+        return ""
+    return (urlsplit(base).hostname or "").lower()
+
+
+@app.middleware("http")
+async def restrict_public_surface(request: Request, call_next):
+    """Expose only carrier callbacks when reached through a public tunnel.
+
+    Local and LAN requests are unaffected.  A request is considered public when
+    it carries Cloudflare proxy headers or its Host is the configured public
+    base host; those requests may only touch ``/api/telephony/*``.
+    """
+    if not settings.public_surface_telephony_only:
+        return await call_next(request)
+    headers = request.headers
+    host = (headers.get("host") or "").split(":")[0].strip().lower()
+    proxied = bool(headers.get("cf-connecting-ip") or headers.get("cf-ray"))
+    public = proxied or (bool(host) and host == _configured_public_host())
+    if public and not request.url.path.startswith("/api/telephony/"):
+        return JSONResponse(
+            {"detail": "This host only serves telephony callbacks."}, status_code=404
+        )
+    return await call_next(request)
 
 
 @app.get("/")

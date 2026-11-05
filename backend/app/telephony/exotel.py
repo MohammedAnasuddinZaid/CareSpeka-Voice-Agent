@@ -42,6 +42,11 @@ class ExotelProvider(TelephonyProvider):
     mode = ProviderMode.REAL
     # Exotel AgentStream streams raw linear PCM (audio/x-raw), not G.711.
     media_format = AudioFormat(encoding="pcm16", sample_rate=8000, frame_ms=20)
+    # Exotel's protocol uses snake_case ``stream_sid``.
+    stream_id_field = "stream_sid"
+    # Exotel requires each outbound media chunk to be 3200-100000 bytes and a
+    # multiple of 320.  Batch 20 ms frames (320 bytes) into 100 ms (3200 bytes).
+    outbound_chunk_bytes = 3200
 
     def __init__(
         self,
@@ -70,7 +75,13 @@ class ExotelProvider(TelephonyProvider):
 
     # --- config --------------------------------------------------------
     def is_configured(self) -> bool:
-        return bool(self.api_key and self.api_token and self.account_sid and self.caller_id)
+        return bool(
+            self.api_key
+            and self.api_token
+            and self.account_sid
+            and self.caller_id
+            and self.webhook_secret
+        )
 
     def missing_configuration(self) -> list[str]:
         missing = []
@@ -82,6 +93,12 @@ class ExotelProvider(TelephonyProvider):
             missing.append("EXOTEL_ACCOUNT_SID")
         if not self.caller_id:
             missing.append("EXOTEL_CALLER_ID")
+        if not self.webhook_secret:
+            # Exotel does not sign callbacks, so VoiceLink requires a shared
+            # token in the callback URL.  Without it every webhook would be
+            # (correctly) rejected, so the adapter must not report itself as
+            # ready.
+            missing.append("EXOTEL_WEBHOOK_SECRET")
         return missing
 
     def capabilities(self) -> ProviderCapabilities:
@@ -175,11 +192,13 @@ class ExotelProvider(TelephonyProvider):
             return CallResult(ok=False, detail="Exotel returned a non-JSON response.")
         call = payload.get("Call") or payload
         sid = call.get("Sid") or call.get("sid")
-        state = _map_exotel_call_status(call.get("Status") or call.get("status"))
+        # Exotel's connect response can say "in-progress" before the callee has
+        # answered.  Only webhooks may advance the call beyond "queued", so the
+        # dashboard never reports an answer that did not happen.
         return CallResult(
             ok=bool(sid),
             provider_call_id=sid,
-            state=state,
+            state="queued",
             accepted=True,
             detail="Exotel accepted the call request (ringing is confirmed by webhook).",
             raw=payload,

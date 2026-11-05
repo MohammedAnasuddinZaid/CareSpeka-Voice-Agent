@@ -114,8 +114,14 @@ def _refresh_provider_from_secrets() -> None:
 # ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
-def _cookie_secure() -> bool:
-    return (settings.public_base_url or "").startswith("https://")
+def _cookie_secure(request: Request) -> bool:
+    """Only mark the session cookie Secure when the client is actually on TLS.
+
+    Using ``PUBLIC_BASE_URL`` here would break the local dashboard because the
+    browser talks to the backend over plain HTTP on localhost.
+    """
+    forwarded = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip()
+    return forwarded == "https" or request.url.scheme == "https"
 
 
 @router.post("/auth/login")
@@ -134,7 +140,7 @@ async def login(body: LoginBody, request: Request, response: Response) -> dict[s
         raw,
         httponly=True,
         samesite="lax",
-        secure=_cookie_secure(),
+        secure=_cookie_secure(request),
         max_age=settings.session_minutes * 60,
         path="/",
     )

@@ -102,6 +102,13 @@ class TelephonyProvider(ABC):
     name: str = "unknown"
     mode: ProviderMode = ProviderMode.REAL
     media_format: AudioFormat = AudioFormat()
+    #: Field name the provider expects for the stream id in outbound media
+    #: messages.  Exotel's AgentStream protocol uses ``stream_sid``; Twilio's
+    #: Media Streams protocol uses ``streamSid``.
+    stream_id_field: str = "stream_sid"
+    #: Minimum size (bytes) of an outbound audio payload.  Exotel rejects
+    #: chunks smaller than 3200 bytes; 0 means "send one frame per message".
+    outbound_chunk_bytes: int = 0
 
     # --- configuration -------------------------------------------------
     @abstractmethod

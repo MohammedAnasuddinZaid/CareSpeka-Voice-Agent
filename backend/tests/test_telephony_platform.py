@@ -618,3 +618,274 @@ def test_api_call_prefers_verified_primary_patient_contact(api_client):
     assert explicit.status_code == 200, explicit.text
     assert explicit.json()["call"]["to_masked"].endswith("3210")
     assert explicit.json()["call"]["contact_id"] == secondary["id"]
+
+
+# ---------------------------------------------------------------------------
+# Real-provider protocol details (documented vs implemented)
+# ---------------------------------------------------------------------------
+def test_provider_media_protocols_are_explicit():
+    # Twilio Media Streams use camelCase streamSid; Exotel uses stream_sid.
+    assert TwilioProvider().stream_id_field == "streamSid"
+    assert ExotelProvider().stream_id_field == "stream_sid"
+    # Exotel rejects outbound chunks below 3200 bytes / not a multiple of 320.
+    assert ExotelProvider().outbound_chunk_bytes == 3200
+    assert TwilioProvider().outbound_chunk_bytes == 0
+
+
+def test_provider_secrets_are_stored_but_never_echoed(api_client):
+    from app import secrets_store
+
+    response = api_client.post(
+        "/api/platform/provider/secrets",
+        json={"values": {"EXOTEL_API_KEY": "dummy-key-for-redaction-test"}},
+    )
+    assert response.status_code == 200, response.text
+    # The value must never travel back to the caller, only the key name.
+    assert "dummy-key-for-redaction-test" not in response.text
+    assert response.json()["stored"] == ["EXOTEL_API_KEY"]
+    assert secrets_store.get("EXOTEL_API_KEY") == "dummy-key-for-redaction-test"
+
+    status = api_client.get("/api/platform/provider").json()["provider"]["secrets"]
+    assert status["EXOTEL_API_KEY"] is True
+    assert "dummy-key-for-redaction-test" not in str(status)
+
+    secrets_store.clear(["EXOTEL_API_KEY"])
+    registry.reset_cache()
+
+
+def test_exotel_requires_webhook_secret_to_be_configured():
+    incomplete = ExotelProvider(
+        api_key="key", api_token="token", account_sid="sid",
+        caller_id="+918000000000",
+    )
+    assert incomplete.is_configured() is False
+    assert "EXOTEL_WEBHOOK_SECRET" in incomplete.missing_configuration()
+
+    complete = ExotelProvider(
+        api_key="key", api_token="token", account_sid="sid",
+        caller_id="+918000000000", webhook_secret="shared-secret",
+    )
+    assert complete.is_configured() is True
+
+
+def test_external_url_honours_forwarded_headers():
+    from starlette.requests import Request
+
+    from app.telephony.router import _external_url
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/api/telephony/twilio/events",
+        "raw_path": b"/api/telephony/twilio/events",
+        "query_string": b"type=call",
+        "root_path": "",
+        "headers": [
+            (b"host", b"internal.local:8000"),
+            (b"x-forwarded-host", b"abc123.trycloudflare.com"),
+            (b"x-forwarded-proto", b"https"),
+        ],
+        "server": ("127.0.0.1", 8000),
+        "client": ("127.0.0.1", 12345),
+    }
+    assert (
+        _external_url(Request(scope))
+        == "https://abc123.trycloudflare.com/api/telephony/twilio/events?type=call"
+    )
+
+
+def test_public_tunnel_cannot_reach_non_telephony_routes(clean_db):
+    from fastapi.testclient import TestClient
+
+    import app.main as main
+
+    client = TestClient(main.app)
+    proxied = {"cf-connecting-ip": "203.0.113.7"}
+    blocked = client.get("/api/voicelink/health", headers=proxied)
+    assert blocked.status_code == 404
+    # The carrier surface still passes the guard (405 = reachable, wrong verb).
+    allowed = client.get("/api/telephony/mock/events", headers=proxied)
+    assert allowed.status_code == 405
+    # Local requests are unaffected.
+    local = client.get("/api/voicelink/health")
+    assert local.status_code == 200
+
+
+def test_bridge_batches_audio_for_exotel_chunk_floor():
+    import struct
+
+    from app.telephony.bridge import TelephonyBridge
+
+    rate = 22050
+    samples = b"\x00\x01" * int(rate * 0.3)
+    wav = (
+        b"RIFF" + struct.pack("<I", 36 + len(samples)) + b"WAVE"
+        + b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
+        + b"data" + struct.pack("<I", len(samples)) + samples
+    )
+
+    class _TTS:
+        async def synthesize(self, text):  # noqa: ANN001
+            class _Result:
+                pass
+
+            result = _Result()
+            result.wav = wav
+            return result
+
+    class _Engine:
+        pass
+
+    engine = _Engine()
+    engine.tts = _TTS()
+    sent: list[int] = []
+
+    async def send_audio(payload: bytes) -> None:
+        sent.append(len(payload))
+
+    async def scenario() -> None:
+        bridge = TelephonyBridge(
+            engine=engine,
+            media_format=AudioFormat(encoding="pcm16", sample_rate=8000),
+            send_audio=send_audio,
+            outbound_chunk_bytes=3200,
+        )
+        await bridge._speak("Hello there.")
+        await bridge.stop()
+
+    asyncio.run(scenario())
+    assert sent, "no audio was sent"
+    # Exotel requires every chunk (including the last) to be 3200 bytes.
+    assert all(size == 3200 for size in sent)
+
+
+def test_router_uses_camelcase_stream_sid_for_twilio(clean_db, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import app.main as main
+    from app.telephony import router as router_module
+
+    class _FakeBridge:
+        def __init__(self, **kwargs):  # noqa: ANN003
+            self.send_audio = kwargs["send_audio"]
+            self.send_clear = kwargs["send_clear"]
+            self.media: list[bytes] = []
+
+        async def start(self) -> None:
+            await self.send_audio(b"\x00\x00\x00\x00")
+            await self.send_clear()
+
+        async def stop(self) -> None:
+            return None
+
+        async def handle_media(self, payload: bytes) -> None:
+            self.media.append(payload)
+
+    monkeypatch.setattr(router_module, "TelephonyBridge", _FakeBridge)
+    client = TestClient(main.app)
+    with client.websocket_connect("/api/telephony/twilio/media") as ws:
+        ws.send_json({"event": "connected"})
+        ws.send_json(
+            {
+                "event": "start",
+                "start": {
+                    "streamSid": "MZ-test",
+                    "callSid": "CA-test",
+                    "from": "+919800000001",
+                    "to": "+919800000002",
+                },
+            }
+        )
+        media = ws.receive_json()
+        assert media["event"] == "media"
+        assert media["streamSid"] == "MZ-test"
+        assert "stream_sid" not in media
+        cleared = ws.receive_json()
+        assert cleared == {"event": "clear", "streamSid": "MZ-test"}
+        ws.send_json({"event": "stop"})
+
+
+def test_outbound_media_track_is_ignored():
+    from app.telephony.router import _media_track
+
+    assert _media_track({"media": {"track": "outbound"}}) == "outbound"
+    assert _media_track({"media": {"track": "inbound"}}) == "inbound"
+    assert _media_track({"media": {"payload": "x"}}) is None
+
+
+def test_exotel_initial_response_is_not_reported_as_answered(monkeypatch):
+    from app.telephony import exotel as exotel_module
+
+    class _Response:
+        status_code = 200
+        text = "{}"
+
+        def json(self):
+            # Exotel's documented connect response example says in-progress.
+            return {"Call": {"Sid": "CA-initial", "Status": "in-progress"}}
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return _Response()
+
+    monkeypatch.setattr(exotel_module.httpx, "AsyncClient", _Client)
+    provider = ExotelProvider(
+        api_key="k", api_token="t", account_sid="sid",
+        caller_id="+918000000000", webhook_secret="s",
+    )
+    result = asyncio.run(
+        provider.start_outbound_call(
+            to_number="+919876543210",
+            from_number="+918000000000",
+            answer_url="https://example.test/answer",
+            stream_url="wss://example.test/media",
+            status_url="https://example.test/status",
+        )
+    )
+    assert result.ok is True
+    assert result.accepted is True
+    assert result.provider_call_id == "CA-initial"
+    assert result.state == "queued"
+
+
+def test_twilio_accepted_status_maps_to_queued():
+    from app.telephony.twilio import _map_twilio_call_status
+
+    assert _map_twilio_call_status("accepted") == "queued"
+    assert _map_twilio_call_status("queued") == "queued"
+
+
+def test_session_cookie_is_secure_only_behind_tls(clean_db):
+    from fastapi.testclient import TestClient
+
+    import app.main as main
+
+    clean_db.create_user(
+        username="cookie.user", display_name="Cookie User", role="admin",
+        password_hash=auth.hash_password("cookie-pass-123"),
+    )
+    client = TestClient(main.app)
+    local = client.post(
+        "/api/platform/auth/login",
+        json={"username": "cookie.user", "password": "cookie-pass-123"},
+    )
+    assert local.status_code == 200, local.text
+    assert "secure" not in local.headers.get("set-cookie", "").lower()
+
+    proxied = client.post(
+        "/api/platform/auth/login",
+        json={"username": "cookie.user", "password": "cookie-pass-123"},
+        headers={"x-forwarded-proto": "https"},
+    )
+    assert proxied.status_code == 200, proxied.text
+    assert "secure" in proxied.headers.get("set-cookie", "").lower()

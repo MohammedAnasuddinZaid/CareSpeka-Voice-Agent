@@ -71,6 +71,25 @@ check `backend/logs/backend.err.log`.
   not estimates).
 - Provider state: dashboard → **Provider**.
 
+## Public callback tunnel (testing only)
+
+Carriers cannot reach `127.0.0.1`. For a short test, run a Cloudflare quick
+tunnel against the backend and record its URL in the two ignored config values:
+
+```powershell
+D:\voicelink-tools\cloudflared.exe tunnel --url http://127.0.0.1:8000 `
+    --no-autoupdate --logfile D:\voicelink-tools\cloudflared.log
+```
+
+- Put the printed `https://<random>.trycloudflare.com` into `PUBLIC_BASE_URL`
+  and `TELEPHONY_WEBHOOK_BASE_URL` in `.env.voicelink`, then restart.
+- The URL is **ephemeral**: it changes on every tunnel restart, so update the
+  config and the carrier console together.
+- Tunnel traffic is restricted to `/api/telephony/*`; the dashboard and data
+  APIs return `404` through the tunnel. Do not disable that guard on a public
+  host.
+- Logs and the tunnel binary stay on `D:`, never in the repository.
+
 ## Where build artifacts live
 
 - Source stays in the repository (on `C:` for this machine).
@@ -88,6 +107,8 @@ check `backend/logs/backend.err.log`.
 | Login fails with “Sign-in failed” | Wrong credentials; after repeated failures the account is locked for the lockout window |
 | Dashboard shows “Simulated (mock)” | No carrier credentials configured — expected offline |
 | Real call refused: `webhook_not_public` | Set `PUBLIC_BASE_URL`/`TELEPHONY_WEBHOOK_BASE_URL` to a public HTTPS endpoint |
+| Tunnel URL stopped working | Quick-tunnel URLs change on restart; copy the new URL into `.env.voicelink` and restart the backend |
+| Carrier webhook returns `404` through the tunnel | Only `/api/telephony/*` is public by design; dashboard and data routes are not exposed |
 | Messages stay “sent”, never “delivered” | The carrier has not reported delivery, or delivery receipts are not configured |
 | Escalation action trail empty | The escalation was just created; actions appear as the policy runs |
 | Dashboard cannot load data | Backend offline — run `./start.ps1`, check `backend/logs/backend.err.log` |

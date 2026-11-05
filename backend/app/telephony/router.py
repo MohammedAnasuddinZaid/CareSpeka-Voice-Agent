@@ -17,6 +17,7 @@ import base64
 import asyncio
 import logging
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, Response
@@ -48,6 +49,24 @@ def _provider_or_404(name: str) -> Any:
     return registry.get_provider(name)
 
 
+def _external_url(request: Request) -> str:
+    """Rebuild the URL the carrier actually signed.
+
+    Behind a TLS-terminating tunnel/proxy the ASGI request sees ``http`` and an
+    internal host.  Carriers sign the *public* URL, so honour the forwarded
+    headers when present.
+    """
+    headers = {k.lower(): v for k, v in request.headers.items()}
+    scheme = headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
+    host = headers.get("x-forwarded-host") or headers.get("host") or request.url.netloc
+    host = host.split(",")[0].strip()
+    parsed = urlsplit(str(request.url))
+    url = f"{scheme}://{host}{parsed.path}"
+    if parsed.query:
+        url = f"{url}?{parsed.query}"
+    return url
+
+
 # ---------------------------------------------------------------------------
 # Status / delivery webhooks
 # ---------------------------------------------------------------------------
@@ -56,7 +75,7 @@ async def provider_events(provider: str, request: Request) -> Response:
     resolved = _provider_or_404(provider)
     body = await request.body()
     headers = {k: v for k, v in request.headers.items()}
-    url = str(request.url)
+    url = _external_url(request)
     kind_hint = "call.status" if request.query_params.get("type") == "call" else None
     try:
         event = webhooks.extract_event(
@@ -78,7 +97,7 @@ async def provider_voice(provider: str, request: Request) -> Response:
     resolved = _provider_or_404(provider)
     body = await request.body()
     headers = {k: v for k, v in request.headers.items()}
-    url = str(request.url)
+    url = _external_url(request)
 
     if resolved.name != "mock":
         try:
@@ -143,6 +162,8 @@ async def provider_media(websocket: WebSocket, provider: str) -> None:
     bridge: Optional[TelephonyBridge] = None
     send_lock = asyncio.Lock()
     closed = asyncio.Event()
+    # Exotel uses ``stream_sid``; Twilio uses ``streamSid``.
+    stream_id_field = getattr(resolved, "stream_id_field", "stream_sid")
 
     async def send_event(event: dict[str, Any]) -> None:
         if websocket.client_state != WebSocketState.CONNECTED or closed.is_set():
@@ -154,18 +175,22 @@ async def provider_media(websocket: WebSocket, provider: str) -> None:
             closed.set()
 
     async def send_audio(pcm: bytes) -> None:
+        # Every outbound media message must be addressed to an established
+        # stream; sending before ``start`` cannot reach the caller.
         if not stream_sid:
-            await send_event({"event": "connected"})
+            return
         await send_event(
             {
                 "event": "media",
-                "stream_sid": stream_sid,
+                stream_id_field: stream_sid,
                 "media": {"payload": base64.b64encode(pcm).decode("ascii")},
             }
         )
 
     async def send_clear() -> None:
-        await send_event({"event": "clear", "stream_sid": stream_sid})
+        if not stream_sid:
+            return
+        await send_event({"event": "clear", stream_id_field: stream_sid})
 
     async def on_escalation(request: EscalationRequest) -> Optional[str]:
         await service.raise_escalation(
@@ -257,11 +282,17 @@ async def provider_media(websocket: WebSocket, provider: str) -> None:
                     persona=persona,
                     demo_mode=_demo_mode(),
                     on_escalation=on_escalation,
+                    outbound_chunk_bytes=getattr(resolved, "outbound_chunk_bytes", 0),
                 )
                 await bridge.start()
                 continue
 
             if event in {"media", "audio"} and bridge is not None:
+                # Twilio can echo the outbound track back on the same socket.
+                # Feeding our own TTS into the VAD would make the agent
+                # interrupt itself, so only inbound caller audio is processed.
+                if _media_track(payload) == "outbound":
+                    continue
                 encoded = (
                     _nested(payload, "media", "payload")
                     or payload.get("payload")
@@ -330,3 +361,9 @@ def _nested(payload: dict[str, Any], *path: str) -> Any:
             return None
         current = current.get(key)
     return current
+
+
+def _media_track(payload: dict[str, Any]) -> Optional[str]:
+    """Return the media track name when a provider supplies one (Twilio)."""
+    track = _nested(payload, "media", "track") or payload.get("track")
+    return str(track).strip().lower() if track else None

@@ -99,6 +99,24 @@ shared-secret token.
 - **An authenticated tunnel** (e.g. an HTTPS tunnel with access control) while
   testing. Document the tunnel, keep it authenticated, and shut it down when
   finished.
+- **Cloudflare quick tunnel** for a short, credential-free test. The URL is
+  random and changes every time `cloudflared` restarts, so treat it as
+  disposable:
+
+  ```powershell
+  # Binary and logs live on D:, never in the repository.
+  D:\voicelink-tools\cloudflared.exe tunnel --url http://127.0.0.1:8000 `
+      --no-autoupdate --logfile D:\voicelink-tools\cloudflared.log
+  # Copy the printed https://<random>.trycloudflare.com into PUBLIC_BASE_URL and
+  # TELEPHONY_WEBHOOK_BASE_URL in .env.voicelink, then restart the backend.
+  ```
+
+  While a tunnel is active, VoiceLink recognises tunnel traffic (Cloudflare
+  headers or the configured public host) and serves **only**
+  `/api/telephony/*` on it. The dashboard, transcript API, database endpoints
+  and the browser demo stay unreachable from the internet. Set
+  `VOICELINK_PUBLIC_SURFACE_TELEPHONY_ONLY=false` only for a deliberate,
+  access-controlled deployment.
 
 **Never** expose the local `127.0.0.1:8000` port directly. The backend binds to
 loopback by default; the phone gateway (`:3443`) accepts only private-network
