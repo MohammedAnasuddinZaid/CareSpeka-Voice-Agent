@@ -18,7 +18,9 @@ import type {
   CareTask,
   CareTranscriptEntry,
   ClinicalPatient,
+  PatientMessage,
 } from "./types";
+import { ensureDemoSeed } from "./seedDemo";
 
 // ---------------------------------------------------------------------------
 // store info
@@ -42,6 +44,7 @@ async function ensurePatientsSeeded(): Promise<void> {
 }
 
 export async function listPatients(): Promise<ClinicalPatient[]> {
+  await ensureDemoSeed();
   await ensurePatientsSeeded();
   const d = await getDriver();
   const index = ((await d.getDoc(K.patientIndex)) as string[] | null) ?? [];
@@ -103,6 +106,7 @@ export async function getSession(id: string): Promise<CareSession | null> {
 }
 
 export async function listSessions(limit = 50): Promise<CareSession[]> {
+  await ensureDemoSeed();
   const d = await getDriver();
   const index = ((await d.getDoc(K.sessionIndex)) as string[] | null) ?? [];
   const out: CareSession[] = [];
@@ -377,6 +381,48 @@ export async function setTaskStatus(id: string, status: "open" | "done"): Promis
   const latest = [...all].reverse().find((t) => t.id === id);
   if (!latest) return;
   await d.appendList(K.tasks, { ...latest, status }, 2000);
+}
+
+// ---------------------------------------------------------------------------
+// patient messages (nurse -> patient)
+// ---------------------------------------------------------------------------
+
+export async function addMessage(input: {
+  patientId: string;
+  patientName: string;
+  text: string;
+  createdBy: string;
+}): Promise<PatientMessage> {
+  const text = input.text.trim().slice(0, 2000);
+  const message: PatientMessage = {
+    id: newId("msg"),
+    patientId: input.patientId,
+    patientName: input.patientName,
+    text,
+    createdAt: isoNow(),
+    createdBy: input.createdBy,
+    channel: "web-voice-demo",
+  };
+  const d = await getDriver();
+  await d.appendList(K.messages, message, 2000);
+  return message;
+}
+
+/** Newest first. Optionally limited to one patient. */
+export async function listMessages(patientId?: string): Promise<PatientMessage[]> {
+  const d = await getDriver();
+  const all = (await d.getList(K.messages)) as PatientMessage[];
+  const filtered = patientId ? all.filter((m) => m.patientId === patientId) : all;
+  return [...filtered].reverse();
+}
+
+export async function markMessagesRead(patientId: string): Promise<void> {
+  // Messages are an append-only log; a read marker appends the updated record.
+  const d = await getDriver();
+  const all = (await d.getList(K.messages)) as PatientMessage[];
+  const unread = all.filter((m) => m.patientId === patientId && !m.readAt);
+  const now = isoNow();
+  for (const m of unread) await d.appendList(K.messages, { ...m, readAt: now }, 2000);
 }
 
 // ---------------------------------------------------------------------------

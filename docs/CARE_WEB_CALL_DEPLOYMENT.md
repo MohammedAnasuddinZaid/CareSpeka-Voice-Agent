@@ -61,6 +61,7 @@ The build has been verified locally (`npx next build`). All `/api/care/*` routes
 | `CARE_ASR_MODEL` | optional | Default `Xenova/whisper-tiny.en`. |
 | `CARE_LLM_MODEL` | optional | Default `Llama-3.2-1B-Instruct-q4f16_1-MLC`. |
 | `CARE_STORE` | optional | Force `redis` \| `file` \| `memory`. Do **not** set to `memory` on Vercel unless you want a non-persistent demo. |
+| `CARE_SEED_DEMO` | optional | Set to `false` to skip the one-time synthetic demo history. |
 
 The demo credentials (`nurse.demo` / `nurse.demo`) are only a local convenience. If you deploy without setting `CARE_NURSE_*`, anyone can sign in — set them.
 
@@ -96,12 +97,20 @@ No model files are ever committed to the repository.
 After the first deploy, on the production URL:
 
 1. Open `https://<app>/care` and sign in.
-2. The header badge must read **persistent (redis)**. If it reads **NOT persistent**, the Redis env vars are missing or wrong.
-3. Start a session, copy the joining link, and open it on a second device (phone).
-4. Confirm audio flows **both ways** and the transcript updates on the nurse dashboard.
-5. Ask the patient to say *"I have chest pain."* — the nurse dashboard must show a red escalation, and the audit trail must contain `care.session_created`, `care.patient_joined`, `escalation.created` / related, `care.session_ended`, `care.report_generated`.
+2. The header badge must read **persistent (redis)**. If it reads **NOT persistent**, the Redis env vars are missing or wrong — cross-device calls will be unreliable.
+3. Ask the **voice assistant** a question, e.g. *"What medications is Anita on?"* — the answer must come back immediately and be spoken. Then say *"send a message to Anita saying please weigh yourself tomorrow morning"* and confirm the **Messages** panel shows it.
+4. In **Patients**, click **Call** for a patient. Copy the joining link (or scan the QR) and open it on a **second device** (phone).
+5. On the patient page, confirm the nurse's message is visible. Join, allow the microphone, and confirm audio flows **both ways** and the transcript updates on the nurse dashboard.
+6. Ask the patient to say *"I have chest pain."* — the nurse dashboard must show a red escalation, and the audit trail must contain `care.session_created`, `care.patient_joined`, `escalation.created` / related, `care.session_ended`, `care.report_generated`.
+7. Repeat with the roles reversed where possible (phone nurse → laptop patient) to confirm it is genuinely peer-to-peer and not tied to one device type.
 
-Only after a real two-device test passes end-to-end should this be described as verified.
+Only after a real two-device test passes end-to-end should this be described as verified. The microphone requires HTTPS, which Vercel provides automatically.
+
+### Multi-device checklist
+- **Two browsers/phones, same session link** — the second *different* joiner is rejected by design (single patient per session). Use a fresh link for the next patient.
+- **Phone cannot reach the link** — `NEXT_PUBLIC_CARESPEAK_URL` must be the public `https://` URL, not `localhost`. On Vercel it is auto-detected; set it if you use a custom domain behind a proxy.
+- **No audio, `Peer: failed`** — configure TURN (`CARE_TURN_*`). Mobile carriers frequently block direct P2P.
+- **Session vanishes between requests** — the store is not shared; configure Upstash Redis.
 
 ---
 

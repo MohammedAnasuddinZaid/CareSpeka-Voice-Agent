@@ -3,6 +3,7 @@ import { hashToken, newJoinCode, newToken, safeEqual, isExpired } from "@/lib/ca
 import { analyze, composeReply, extractSymptoms, greeting, askedTopicsFrom, reportFacts } from "@/lib/care/agent";
 import { buildReport, extractDuration } from "@/lib/care/report";
 import {
+  addMessage,
   appendTranscript,
   createSession,
   expireIfStale,
@@ -11,15 +12,18 @@ import {
   getSession,
   linkParticipantToken,
   listEvents,
+  listMessages,
   listSignals,
   listTranscript,
+  markMessagesRead,
   pushSignal,
   regenerateJoinToken,
   updateSession,
 } from "@/lib/care/repo";
 import { resetDriverForTests } from "@/lib/care/store";
 import { getSeedPatient } from "@/lib/care/seedPatients";
-import type { CareTranscriptEntry } from "@/lib/care/types";
+import { answerQuestion, type AssistantContext, type PatientContext } from "@/lib/care/assistant";
+import type { CareSession, CareTask, CareTranscriptEntry } from "@/lib/care/types";
 
 function entry(seq: number, role: CareTranscriptEntry["role"], text: string): CareTranscriptEntry {
   return { id: `t${seq}`, seq, sessionId: "s", role, text, at: new Date().toISOString() };
@@ -207,5 +211,145 @@ describe("session repository", () => {
     const newer = newToken();
     await updateSession(session.id, { participantTokenHash: hashToken(newer) });
     expect(await findSessionByParticipantToken(token)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// nurse assistant
+// ---------------------------------------------------------------------------
+
+function fakeSession(patientId: string, over: Partial<CareSession> = {}): CareSession {
+  return {
+    id: "wc_test",
+    mode: "web-voice-demo",
+    patientId,
+    nurseId: "nurse_1",
+    nurseName: "Nurse Demo",
+    status: "ended",
+    createdAt: new Date().toISOString(),
+    joinTokenHash: "h",
+    joinCode: "123456",
+    joinExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+    escalated: false,
+    seq: 0,
+    ...over,
+  };
+}
+
+function assistantContext(focusedPatientId?: string): AssistantContext {
+  const anita = getSeedPatient("pt_0001")!;
+  const rahul = getSeedPatient("pt_0002")!;
+  const task: CareTask = {
+    id: "task_1",
+    patientId: anita.id,
+    title: "Call Anita back about weight gain",
+    status: "open",
+    createdAt: new Date().toISOString(),
+    createdBy: "Nurse Demo",
+  };
+  const anitaCtx: PatientContext = {
+    patient: anita,
+    lastSession: fakeSession(anita.id, { escalated: true }),
+    lastTranscript: [entry(1, "patient", "I gained two kilos and my ankles are puffy")],
+    lastReport: null,
+    openTasks: [task],
+    messages: [],
+  };
+  const rahulCtx: PatientContext = {
+    patient: rahul,
+    lastSession: null,
+    lastTranscript: [],
+    lastReport: null,
+    openTasks: [],
+    messages: [],
+  };
+  const focused = focusedPatientId === anita.id ? anitaCtx : focusedPatientId === rahul.id ? rahulCtx : null;
+  return { patients: [anitaCtx, rahulCtx], focused };
+}
+
+describe("nurse assistant", () => {
+  it("answers a medication question from the record", () => {
+    const r = answerQuestion("What medications is Anita on?", assistantContext());
+    expect(r.intent).toBe("medications");
+    expect(r.patientId).toBe("pt_0001");
+    expect(r.answer).toContain("Furosemide");
+    expect(r.answer).toContain("Metformin");
+  });
+
+  it("answers an allergy question", () => {
+    const r = answerQuestion("Does Anita have any allergies?", assistantContext());
+    expect(r.intent).toBe("allergies");
+    expect(r.answer).toContain("Penicillin");
+  });
+
+  it("answers an observations question with the latest values", () => {
+    const r = answerQuestion("What are Anita's latest observations?", assistantContext());
+    expect(r.intent).toBe("observations");
+    expect(r.answer).toMatch(/Weight/);
+  });
+
+  it("reports a full overview when asked about a patient", () => {
+    const r = answerQuestion("Tell me about Rahul", assistantContext());
+    expect(r.intent).toBe("overview");
+    expect(r.answer).toContain("Rahul Verma");
+    expect(r.answer).toContain("Amlodipine");
+  });
+
+  it("answers cross-patient questions about who needs attention", () => {
+    const r = answerQuestion("Who needs follow-up today?", assistantContext());
+    expect(r.intent).toBe("cross_patient");
+    expect(r.answer).toContain("Anita");
+  });
+
+  it("turns dictation into a send_message action", () => {
+    const r = answerQuestion("send a message to Anita Sharma saying please weigh yourself tomorrow morning", assistantContext());
+    expect(r.intent).toBe("send_message");
+    expect(r.action?.type).toBe("send_message");
+    if (r.action?.type === "send_message") {
+      expect(r.action.patientId).toBe("pt_0001");
+      expect(r.action.text).toContain("weigh yourself");
+    }
+  });
+
+  it("asks which patient when dictation names nobody it knows", () => {
+    const r = answerQuestion("send a message to Nobody Atall saying hello", assistantContext());
+    expect(r.intent).toBe("send_message_unresolved");
+    expect(r.action).toBeUndefined();
+    expect(r.answer).toMatch(/could not tell which patient/i);
+  });
+
+  it("never invents facts for an empty question", () => {
+    const r = answerQuestion("", assistantContext());
+    expect(r.intent).toBe("empty");
+    expect(r.suggestedQuestions.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// patient messages
+// ---------------------------------------------------------------------------
+
+describe("patient message repository", () => {
+  beforeEach(() => {
+    resetDriverForTests();
+    process.env.CARE_STORE = "memory";
+  });
+
+  it("stores messages newest-first and filters by patient", async () => {
+    await addMessage({ patientId: "pt_0001", patientName: "Anita Sharma", text: "first", createdBy: "Nurse Demo" });
+    await addMessage({ patientId: "pt_0002", patientName: "Rahul Verma", text: "other", createdBy: "Nurse Demo" });
+    await addMessage({ patientId: "pt_0001", patientName: "Anita Sharma", text: "second", createdBy: "Nurse Demo" });
+
+    const all = await listMessages();
+    expect(all.map((m) => m.text).slice(0, 2)).toEqual(["second", "other"]);
+    const anita = await listMessages("pt_0001");
+    expect(anita.map((m) => m.text)).toEqual(["second", "first"]);
+  });
+
+  it("marks a patient's messages as read", async () => {
+    await addMessage({ patientId: "pt_0001", patientName: "Anita Sharma", text: "hi", createdBy: "Nurse Demo" });
+    await markMessagesRead("pt_0001");
+    const messages = await listMessages("pt_0001");
+    expect(messages[0].readAt).toBeTruthy();
   });
 });

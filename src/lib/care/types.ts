@@ -243,6 +243,18 @@ export interface CareTask {
   due?: string;
 }
 
+/** A message the nurse (or the voice assistant on the nurse's behalf) sends to a patient. */
+export interface PatientMessage {
+  id: string;
+  patientId: string;
+  patientName: string;
+  text: string;
+  createdAt: string;
+  createdBy: string;
+  channel: "web-voice-demo";
+  readAt?: string;
+}
+
 // --- public views (never leak server secrets) ------------------------------
 
 export type CareSessionView = Omit<
@@ -266,6 +278,8 @@ export interface JoinPreview {
   alreadyJoined: boolean;
   mode: typeof CARE_MODE;
   modeLabel: typeof CARE_MODE_LABEL;
+  /** Messages the nurse has left for this patient, newest first. */
+  messages?: PatientMessage[];
 }
 
 export interface JoinResult {

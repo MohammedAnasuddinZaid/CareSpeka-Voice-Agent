@@ -17,6 +17,7 @@ import type {
   ClinicalPatient,
   JoinPreview,
   JoinResult,
+  PatientMessage,
 } from "@/lib/care/types";
 
 export class CareApiError extends Error {
@@ -304,5 +305,42 @@ export async function careSetTask(id: string, status: "open" | "done") {
   return request<{ tasks: CareTask[] }>("/api/care/tasks", {
     method: "PATCH",
     body: JSON.stringify({ id, status }),
+  });
+}
+
+// --- nurse voice assistant --------------------------------------------------
+
+export type AssistantAction =
+  | { type: "send_message"; patientId: string; patientName: string; text: string }
+  | { type: "start_call"; patientId: string; patientName: string };
+
+export interface AssistantReply {
+  answer: string;
+  intent: string;
+  engine: string;
+  patientId?: string;
+  action: AssistantAction | null;
+  suggestedQuestions: string[];
+}
+
+/** Ask the care assistant a question about the patients (nurse only). */
+export async function careAskAssistant(question: string, patientId?: string | null) {
+  return request<AssistantReply>("/api/care/assistant", {
+    method: "POST",
+    body: JSON.stringify({ question, patientId: patientId ?? undefined }),
+  });
+}
+
+// --- patient messages -------------------------------------------------------
+
+export async function careListMessages(patientId?: string) {
+  const qs = patientId ? `?patientId=${encodeURIComponent(patientId)}` : "";
+  return request<{ messages: PatientMessage[] }>(`/api/care/messages${qs}`);
+}
+
+export async function careSendMessage(patientId: string, text: string) {
+  return request<{ message: PatientMessage }>("/api/care/messages", {
+    method: "POST",
+    body: JSON.stringify({ patientId, text }),
   });
 }

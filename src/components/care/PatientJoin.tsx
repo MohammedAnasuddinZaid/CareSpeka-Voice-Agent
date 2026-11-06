@@ -20,8 +20,8 @@ import {
 } from "@/lib/careClient";
 import { speak, speechSynthesisAvailable, stopSpeaking } from "@/lib/care/browserAI";
 import { useCareRtc } from "@/hooks/useCareRtc";
-import { Badge, Notice, Spinner } from "@/components/dashboard/ui";
-import type { JoinPreview } from "@/lib/care/types";
+import { Badge, Notice, Spinner, formatTime } from "@/components/dashboard/ui";
+import type { JoinPreview, PatientMessage } from "@/lib/care/types";
 
 type Phase = "loading" | "invalid" | "ready" | "joining" | "joined" | "ended";
 
@@ -276,6 +276,7 @@ export default function PatientJoin({ token }: { token: string | null }) {
             ) : (
               <p className="text-sm text-[#4b4b4b]">Enter your joining code to continue.</p>
             )}
+            {preview?.messages && preview.messages.length ? <NurseMessages messages={preview.messages} /> : null}
             {error ? <Notice tone="danger">{error}</Notice> : null}
             <form onSubmit={join} className="space-y-2">
               {!token ? (
@@ -368,6 +369,22 @@ export default function PatientJoin({ token }: { token: string | null }) {
       <p className="mt-4 text-center text-[11px] text-[#9ca3af]">
         This is a browser-to-browser demonstration call, not a telephone call.
       </p>
+    </div>
+  );
+}
+
+function NurseMessages({ messages }: { messages: PatientMessage[] }) {
+  return (
+    <div className="rounded-2xl border border-[#f0d9d3] bg-[#fff7f5] p-3">
+      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#c63a22]">Messages from your nurse</div>
+      <ul className="space-y-2">
+        {messages.slice(0, 5).map((m) => (
+          <li key={m.id} className="text-sm text-[#4b4b4b]">
+            <span className="block text-[11px] text-[#9ca3af]">{formatTime(m.createdAt)}</span>
+            {m.text}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

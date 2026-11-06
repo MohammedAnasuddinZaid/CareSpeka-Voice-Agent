@@ -242,6 +242,8 @@ const K = {
   patient: (id: string) => `care:patient:${id}`,
   patientIndex: "care:patient:index",
   tasks: "care:tasks",
+  messages: "care:messages",
+  seed: "care:seed:v1",
   login: (hash: string) => `care:login:${hash}`,
   joinToken: (hash: string) => `care:jointoken:${hash}`,
   participant: (hash: string) => `care:participant:${hash}`,

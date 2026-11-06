@@ -7,14 +7,12 @@
  * hosts the browser AI (Whisper / WebLLM, opt-in) or falls back to the server
  * care engine, streams the live transcript, and produces a reviewable report.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
   Activity,
   LogOut,
-  Play,
   ShieldCheck,
   Square,
-  UserRound,
   X,
 } from "lucide-react";
 import {
@@ -24,6 +22,7 @@ import {
   careFallbackAgent,
   careGenerateReport,
   careGetSession,
+  careListMessages,
   careListPatients,
   careListSessions,
   careLogin,
@@ -52,10 +51,9 @@ import {
   type AiStatus,
 } from "@/lib/care/browserAI";
 import { useCareRtc } from "@/hooks/useCareRtc";
-import { Badge, Empty, Notice, Panel, Spinner, formatDurationMs, formatTime } from "@/components/dashboard/ui";
+import { Badge, Notice, Spinner, formatDurationMs } from "@/components/dashboard/ui";
 import {
   AiEnginePanel,
-  AuditTimeline,
   ClinicalProfilePanel,
   ConnectionPanel,
   EventFeed,
@@ -66,6 +64,7 @@ import {
   TranscriptPanel,
   sessionTone,
 } from "@/components/care/panels";
+import NurseConsole from "@/components/care/NurseConsole";
 import type {
   CareAuditEntry,
   CareEvent,
@@ -73,6 +72,7 @@ import type {
   CareSessionView,
   CareTask,
   CareTranscriptEntry,
+  PatientMessage,
 } from "@/lib/care/types";
 
 export default function CareDashboard() {
@@ -83,6 +83,7 @@ export default function CareDashboard() {
   const [patients, setPatients] = useState<PatientSummary[]>([]);
   const [sessions, setSessions] = useState<Array<Record<string, unknown>>>([]);
   const [audit, setAudit] = useState<CareAuditEntry[]>([]);
+  const [messages, setMessages] = useState<PatientMessage[]>([]);
 
   const [session, setSession] = useState<CareSessionView | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
@@ -128,10 +129,16 @@ export default function CareDashboard() {
   // --- bootstrap -----------------------------------------------------------
   const refreshLists = useCallback(async () => {
     try {
-      const [p, s, a] = await Promise.all([careListPatients(), careListSessions(), careAudit(undefined, 120)]);
+      const [p, s, a, m] = await Promise.all([
+        careListPatients(),
+        careListSessions(),
+        careAudit(undefined, 120),
+        careListMessages(),
+      ]);
       setPatients(p.patients);
       setSessions(s.sessions as unknown as Array<Record<string, unknown>>);
       setAudit(a.audit);
+      setMessages(m.messages);
     } catch (err) {
       if (err instanceof CareApiError && err.status === 401) setAuthState("anon");
     }
@@ -540,8 +547,13 @@ export default function CareDashboard() {
       {!config?.store.persistent ? (
         <div className="mb-4">
           <Notice tone="warning">
-            Persistent storage is not configured. Set <span className="font-mono">UPSTASH_REDIS_REST_URL</span> and{" "}
-            <span className="font-mono">UPSTASH_REDIS_REST_TOKEN</span> so sessions survive across serverless instances and devices.
+            <div className="font-semibold">Multi-device calls need a shared store.</div>
+            <div className="mt-0.5">
+              This deployment is running on the <span className="font-mono">{config?.store.driver ?? "memory"}</span> store, which
+              is not shared between serverless instances, so a phone and a laptop may not see each other. Add a free Upstash
+              Redis database and set <span className="font-mono">UPSTASH_REDIS_REST_URL</span> and{" "}
+              <span className="font-mono">UPSTASH_REDIS_REST_TOKEN</span> in the hosting environment.
+            </div>
           </Notice>
         </div>
       ) : null}
@@ -603,7 +615,15 @@ export default function CareDashboard() {
           }}
         />
       ) : (
-        <SetupView patients={patients} sessions={sessions} audit={audit} busy={busy} onStart={startSession} />
+        <NurseConsole
+          patients={patients}
+          sessions={sessions}
+          audit={audit}
+          messages={messages}
+          busy={busy}
+          onStart={startSession}
+          onRefreshMessages={refreshLists}
+        />
       )}
     </div>
   );
@@ -676,102 +696,6 @@ function LoginScreen({ onSignedIn }: { onSignedIn: (u: CareUser) => void }) {
           <span className="font-mono">CARE_NURSE_USER</span> / <span className="font-mono">CARE_NURSE_PASS</span> before real use.
         </p>
       </form>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// setup view
-// ---------------------------------------------------------------------------
-
-function SetupView({
-  patients,
-  sessions,
-  audit,
-  busy,
-  onStart,
-}: {
-  patients: PatientSummary[];
-  sessions: Array<Record<string, unknown>>;
-  audit: CareAuditEntry[];
-  busy: boolean;
-  onStart: (patientId: string) => void;
-}) {
-  const [selected, setSelected] = useState<string | null>(null);
-  const patient = useMemo(() => patients.find((p) => p.id === selected) ?? null, [patients, selected]);
-
-  return (
-    <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
-      <Panel title="Patients" subtitle="Select a patient to start a Web Voice Call — Demo">
-        {patients.length === 0 ? (
-          <Empty>No patients available.</Empty>
-        ) : (
-          <ul className="divide-y divide-[#f1f1f1]">
-            {patients.map((p) => (
-              <li key={p.id}>
-                <button
-                  onClick={() => setSelected(p.id)}
-                  className={`flex w-full items-center gap-3 px-1 py-3 text-left transition ${
-                    selected === p.id ? "bg-[#fdf2ef]" : "hover:bg-[#fafafa]"
-                  }`}
-                >
-                  <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#f1f5f9] text-[#475569]">
-                    <UserRound className="h-4 w-4" />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-semibold text-[#1f1f1f]">{p.displayName}</span>
-                    <span className="block truncate text-xs text-[#6e6e6e]">
-                      {p.age ? `${p.age} yrs · ` : ""}
-                      {p.primaryConcern || "No primary concern recorded"}
-                    </span>
-                  </span>
-                  <span className="flex gap-1">
-                    <Badge tone="neutral">{p.activeConditions} cond.</Badge>
-                    <Badge tone={p.allergies ? "danger" : "neutral"}>{p.allergies} allergy</Badge>
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Panel>
-
-      <div className="space-y-4">
-        <Panel title="Start a session" subtitle={patient ? patient.displayName : "No patient selected"}>
-          {patient ? (
-            <div className="space-y-3 text-sm text-[#4b4b4b]">
-              <p>{patient.primaryConcern || "No primary concern recorded."}</p>
-              <button
-                onClick={() => onStart(patient.id)}
-                disabled={busy}
-                className="inline-flex items-center gap-2 rounded-lg bg-[#c63a22] px-4 py-2 text-sm font-semibold text-white hover:bg-[#a92f1b] disabled:opacity-50"
-              >
-                <Play className="h-4 w-4" /> Start Web Voice Call — Demo
-              </button>
-            </div>
-          ) : (
-            <Empty>Pick a patient from the list.</Empty>
-          )}
-        </Panel>
-
-        <Panel title="Recent sessions" subtitle="Past Web Voice Call — Demo sessions">
-          {sessions.length === 0 ? (
-            <Empty>No sessions yet.</Empty>
-          ) : (
-            <ul className="space-y-2 text-sm">
-              {sessions.slice(0, 8).map((s) => (
-                <li key={String(s.id)} className="flex items-center gap-2">
-                  <Badge tone={sessionTone(String(s.status))}>{String(s.status)}</Badge>
-                  <span className="text-[#4b4b4b]">{String(s.patientName)}</span>
-                  <span className="ml-auto text-xs text-[#9ca3af]">{formatTime(String(s.createdAt))}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Panel>
-
-        <AuditTimeline entries={audit} />
-      </div>
     </div>
   );
 }

@@ -59,15 +59,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 </p>
               </div>
               <div>
-                <h4 className="text-xs font-semibold text-[#1f1f1f] uppercase tracking-widest mb-4">Product</h4>
+                <h4 className="text-xs font-semibold text-[#1f1f1f] uppercase tracking-widest mb-4">Care</h4>
                 <div className="space-y-3">
                   {[
                     { href: "/hand-mode", label: "Hand Mode" },
                     { href: "/eye-mode", label: "Eye Mode" },
-                    { href: "/voicelink", label: "VoiceLink" },
-                    { href: "/care", label: "Web Voice Call (Demo)" },
                     { href: "/nurse-view", label: "Nurse Dashboard" },
-                    { href: "/emergency", label: "Emergency" },
+                    { href: "/ward", label: "Ward" },
+                    { href: "/cctv", label: "CCTV" },
                   ].map((link) => (
                     <a key={link.href} href={link.href}
                       className="block text-sm text-[#6e6e6e] hover:text-[#c63a22] transition-colors">{link.label}</a>
@@ -75,10 +74,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 </div>
               </div>
               <div>
-                <h4 className="text-xs font-semibold text-[#1f1f1f] uppercase tracking-widest mb-4">Resources</h4>
+                <h4 className="text-xs font-semibold text-[#1f1f1f] uppercase tracking-widest mb-4">Voice &amp; records</h4>
                 <div className="space-y-3">
                   {[
-                    { href: "/about", label: "About" },
+                    { href: "/care", label: "Web Voice Call (Demo)" },
+                    { href: "/voicelink", label: "VoiceLink" },
+                    { href: "/dashboard", label: "Dashboard" },
                     { href: "/logs", label: "Gesture Logs" },
                     { href: "/report", label: "Clinical Report" },
                   ].map((link) => (
@@ -88,9 +89,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 </div>
               </div>
               <div>
-                <h4 className="text-xs font-semibold text-[#1f1f1f] uppercase tracking-widest mb-4">Legal</h4>
+                <h4 className="text-xs font-semibold text-[#1f1f1f] uppercase tracking-widest mb-4">More</h4>
                 <div className="space-y-3">
                   {[
+                    { href: "/about", label: "About" },
+                    { href: "/emergency", label: "Emergency" },
                     { href: "/privacy", label: "Privacy Policy" },
                     { href: "/terms", label: "Terms of Service" },
                     { href: "/license", label: "License" },

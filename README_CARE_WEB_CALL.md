@@ -8,12 +8,13 @@ Browser-to-browser AI healthcare voice calls, built on top of CareSpeak × Voice
 
 ## 1. What it does
 
-1. A **nurse** signs in, picks a synthetic patient, and starts a session.
-2. CareSpeak shows a **QR code** and a **6-digit joining code** (both expiring, single-use).
-3. The **patient** scans the QR (or types the code) on their phone, allows the microphone, and joins.
-4. Audio flows **peer-to-peer over native WebRTC**. Only SDP/ICE control messages pass through the API.
-5. The **nurse's browser hosts the AI**: it hears the patient, transcribes, reasons, and replies — out loud on the patient's phone.
-6. Everything is written to a **live transcript**, and ending the session produces a grounded, **reviewable clinical report** plus an **audit trail**.
+1. A **nurse** signs in. The console puts a **voice assistant** first: the nurse can *speak or type* any question about a patient ("what medications is Anita on?", "what did she say in the last call?", "who needs follow-up today?") and get an answer read straight from the stored record. The same input can **dictate a message to a patient** ("send Anita a message saying please weigh yourself tomorrow") and it is saved to their record.
+2. The nurse picks a synthetic patient and starts a session.
+3. CareSpeak shows a **QR code** and a **6-digit joining code** (both expiring, single-use).
+4. The **patient** scans the QR (or types the code) on their phone, allows the microphone, and joins — and sees any messages the nurse left.
+5. Audio flows **peer-to-peer over native WebRTC**. Only SDP/ICE control messages pass through the API.
+6. The **nurse's browser hosts the AI**: it hears the patient, transcribes, reasons, and replies — out loud on the patient's phone.
+7. Everything is written to a **live transcript**, and ending the session produces a grounded, **reviewable clinical report** plus an **audit trail**.
 
 Nothing is sent to a paid API. If the on-device models are not loaded, a deterministic, clinically cautious **rule-based care engine** keeps the demo working — clearly labelled as such.
 
@@ -36,7 +37,8 @@ Nothing is sent to a paid API. If the on-device models are not loaded, a determi
         ┌──────────────────────────────────────────────────────────────┐
         │  Next.js route handlers on Vercel  (/api/care/*)              │
         │  auth · patients · sessions · QR · join · signal · events ·   │
-        │  transcript · agent (fallback) · report · audit · tasks        │
+        │  transcript · agent (fallback) · assistant · messages ·       │
+        │  report · audit · tasks                                       │
         └───────────────────────────────┬──────────────────────────────┘
                                         ▼
                      KV driver:  Upstash Redis (prod) │ JSON file (dev) │ memory (tests)
@@ -67,11 +69,14 @@ Vercel Functions are request/response and may run in different instances or regi
 **Pages**
 | Path | Purpose |
 | --- | --- |
-| `/care` | Nurse dashboard (sign in, pick patient, start call, live transcript, report, audit). |
-| `/care/join?t=<token>` | Patient joining page (also accepts a manual code). |
+| `/care` | Nurse console (sign in → voice assistant → patients → start call → live transcript, report, audit). |
+| `/care/join?t=<token>` | Patient joining page (also accepts a manual code; shows the nurse's messages). |
 
 **API routes** (all under `src/app/api/care/`, all `force-dynamic`)
-`auth/login`, `auth/logout`, `auth/me`, `config`, `patients`, `patients/[id]`, `sessions`, `sessions/[id]`, `sessions/[id]/qr`, `join`, `signal`, `events`, `transcript`, `agent`, `report`, `report/[id]`, `audit`, `tasks`.
+`auth/login`, `auth/logout`, `auth/me`, `config`, `patients`, `patients/[id]`, `sessions`, `sessions/[id]`, `sessions/[id]/qr`, `join`, `signal`, `events`, `transcript`, `agent`, `assistant`, `messages`, `report`, `report/[id]`, `audit`, `tasks`.
+
+- `POST /api/care/assistant` — the nurse voice assistant. Answers from the full patient record and executes dictated `send_message` actions. Deterministic and record-grounded; no model needed.
+- `GET/POST /api/care/messages` — nurse sends/lists patient messages; a patient can read their own messages with their participant token.
 
 ---
 
@@ -100,7 +105,7 @@ CARE_STORE=redis  npm run dev     # requires UPSTASH_REDIS_REST_URL + _TOKEN
 ```
 
 ### Seeding
-There is nothing to seed. The four synthetic patients are written into the store on first access (`src/lib/care/seedPatients.ts`). To reset a file store, delete `.care-data/care-store.json`.
+The four synthetic patients are written into the store on first access (`src/lib/care/seedPatients.ts`). The first time the store is used, a small, clearly-synthetic **demo history** is also seeded (two completed sessions — one escalated and reviewed, one open; grounded reports; a follow-up task; and messages) so a freshly deployed site is not empty. Seeding is idempotent (guarded by `care:seed:v1`), skipped in tests, and can be disabled with `CARE_SEED_DEMO=false`. To reset a file store, delete `.care-data/care-store.json`.
 
 ---
 
@@ -109,10 +114,10 @@ There is nothing to seed. The four synthetic patients are written into the store
 Do this on **two devices on the same network** (a laptop for the nurse and a phone for the patient). HTTPS or `localhost` is required for microphone access.
 
 1. **Nurse** → `https://<your-host>/care` → sign in (`nurse.demo` / `nurse.demo`).
-2. **Nurse** → select **Anita Sharma** → **Start Web Voice Call — Demo**.
-3. A QR card appears. Leave the page open (this is also the AI host).
+2. **Nurse** → talk to the **care assistant** (top of the console): type or speak *"What medications is Anita on?"*, *"What did Anita say in the last call?"*, or *"Who needs follow-up today?"*. To leave a note, say *"send a message to Anita saying please weigh yourself tomorrow morning"* — it is saved and shown on her joining page.
+3. **Nurse** → in **Patients**, click **Call** next to **Anita Sharma**. A QR card appears — leave the page open (this is also the AI host).
 4. **Nurse** (optional) → in the **AI engine** panel, click **Load** next to *Speech recognition* and *Reasoning* to download the on-device models. Skip this to use the built-in care engine.
-5. **Patient** → scan the QR with the phone camera → tap the link → **Join and allow microphone** → allow the mic.
+5. **Patient** → scan the QR with the phone camera → tap the link → see the nurse's message → **Join and allow microphone** → allow the mic.
 6. The **Live connection** panel turns green (`Peer: connected`, `ICE: connected`). The AI speaks its greeting through the phone.
 7. **Patient** talks. Try:
    - "I've been feeling a bit more tired and my ankles are a little swollen." → AI asks heart-failure-relevant follow-ups.
@@ -120,7 +125,7 @@ Do this on **two devices on the same network** (a laptop for the nurse and a pho
 8. Watch the **Live transcript**, **AI insights** and **Session events** update live.
 9. **Nurse** → **End session** → a **draft clinical report** is generated.
 10. **Nurse** → review, optionally edit the summary, add a review note → **Approve report**.
-11. **Nurse** → show the **Audit trail** — every key action has a timestamped entry.
+11. **Nurse** → expand the **Audit trail** — every key action has a timestamped entry.
 
 ### WebRTC-specific checks
 - Confirm the browser dev console shows no TURN errors and `pc.connectionState === "connected"`.
@@ -168,9 +173,9 @@ The existing Content-Security-Policy already allows `cdn.jsdelivr.net` (scripts)
 
 **Tested in this repository**
 - `npx tsc --noEmit` — clean.
-- `npx vitest run` — 77 passing (19 new for the care domain).
-- `npx next build` — succeeds; all 21 care API routes and both pages are emitted.
-- A scripted API smoke test (25 checks: auth, patients, session + QR, join + duplicate rejection, signalling round-trip, transcript + server-side red-flag escalation, fallback agent, end, report + approve, QR regeneration invalidation, patient token isolation, audit trail) passes **25/25** against a production build.
+- `npx vitest run` — 87 passing (29 for the care domain, including the nurse assistant and patient messages).
+- `npx next build` — succeeds; all 20 care API routes and both pages are emitted.
+- A scripted API smoke test (32 checks: auth, patients, session + QR, join + duplicate rejection, signalling round-trip, transcript + server-side red-flag escalation, fallback agent, end, report + approve, QR regeneration invalidation, patient token isolation, the nurse assistant — medication answers, cross-patient answers, dictation and the unresolved-name path — patient messages both directions, and the audit trail) passes **32/32** against a production build.
 
 **NOT tested here — treat as unverified until you run it on two real devices**
 - Native two-device WebRTC audio (no browser/audio devices in this environment).

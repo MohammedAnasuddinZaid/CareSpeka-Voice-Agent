@@ -8,6 +8,7 @@ import {
   findSessionByParticipantToken,
   getPatient,
   linkParticipantToken,
+  listMessages,
   updateSession,
 } from "@/lib/care/repo";
 import { hashToken, newToken } from "@/lib/care/crypto";
@@ -43,6 +44,7 @@ export async function GET(req: NextRequest) {
     alreadyJoined: Boolean(session.joinedAt),
     mode: "web-voice-demo",
     modeLabel: "Web Voice Call — Demo",
+    messages: await listMessages(session.patientId),
   };
   return ok(preview);
 }
