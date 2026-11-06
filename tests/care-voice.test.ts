@@ -7,6 +7,7 @@ import {
   escapeXml,
   isPublicHttpsUrl,
   normalizePhone,
+  placeCall,
   resetCooldownsForTests,
   twilioConfigured,
   twilioFromNumber,
@@ -121,8 +122,7 @@ describe("TwiML", () => {
 });
 
 describe("call cooldown", () => {
-  it("allows one dial per window and reports the wait", async () => {
-    const first = await checkCooldown("SESS:demo", 20_000);
+  it("allows one dial per window and reports the wait", async () => {    const first = await checkCooldown("SESS:demo", 20_000);
     expect(first.allowed).toBe(true);
 
     const second = await checkCooldown("SESS:demo", 20_000);
@@ -143,6 +143,36 @@ describe("call cooldown", () => {
 
     await clearCooldown("SESS:failed");
     expect((await checkCooldown("SESS:failed", 8_000)).allowed).toBe(true);
+  });
+});
+
+describe("placing a call", () => {
+  it("sends only parameters a trial account accepts", async () => {
+    process.env.TWILIO_ACCOUNT_SID = "AC123";
+    process.env.TWILIO_AUTH_TOKEN = "token";
+    process.env.TWILIO_FROM_NUMBER = "+919908786211";
+
+    const original = global.fetch;
+    let sent = "";
+    global.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      sent = String(init?.body ?? "");
+      return new Response(JSON.stringify({ sid: "CA123", status: "queued" }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    try {
+      const res = await placeCall({ to: "+919849130407", url: "https://care.test/api/care/voice" });
+      expect(res.ok).toBe(true);
+      // MachineDetection is rejected on trial accounts with error 21629.
+      expect(sent).not.toContain("MachineDetection");
+      expect(sent).toContain("To=%2B919849130407");
+      expect(sent).toContain("From=%2B919908786211");
+      expect(sent).toContain("Method=POST");
+    } finally {
+      global.fetch = original;
+    }
   });
 });
 

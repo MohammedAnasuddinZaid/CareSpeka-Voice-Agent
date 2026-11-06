@@ -190,7 +190,6 @@ export async function placeCall(input: PlaceCallInput): Promise<PlaceCallResult>
     From: from,
     Url: input.url,
     Method: "POST",
-    MachineDetection: "Disable",
   });
   if (input.statusCallback) body.set("StatusCallback", input.statusCallback);
 
