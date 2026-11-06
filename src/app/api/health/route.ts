@@ -15,6 +15,10 @@ export async function GET(): Promise<NextResponse> {
     ok: true,
     driver: store.driver,
     redisConfigured: !!(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN),
+    // Vercel injects these into the function at runtime. They make it obvious
+    // which build is actually serving traffic when a deploy looks stale.
+    commit: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 8) ?? null,
+    deployment: process.env.VERCEL_DEPLOYMENT_ID ?? null,
     serverTime: Date.now(),
   });
 }
