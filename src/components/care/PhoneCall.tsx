@@ -567,6 +567,15 @@ export default function BrowserCall({
               <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
                 {context.patient.displayName}
                 {context.patient.room ? ` · ${context.patient.room}` : ""}
+                <button
+                  type="button"
+                  onClick={() => void removePatient(context.patient!.id)}
+                  disabled={deletingId === context.patient!.id}
+                  className="ml-1 text-emerald-700 hover:text-red-600"
+                  title="Remove this patient"
+                >
+                  {deletingId === context.patient!.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "×"}
+                </button>
               </span>
             ) : (
               <span className="text-[11px] text-amber-700">Not linked yet</span>
