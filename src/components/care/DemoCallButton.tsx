@@ -12,12 +12,15 @@
  * It never dials by accident: a confirmation is shown first, and the server
  * enforces a short cooldown so the free Twilio balance cannot be hammered.
  */
-import { useCallback, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, Loader2, PhoneCall } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, CheckCircle2, Clock3, Loader2, PhoneCall } from "lucide-react";
 import { CareApiError, carePortalCall } from "@/lib/careClient";
 import { getOrCreatePairToken } from "@/lib/pairing";
 
-type CallState = "idle" | "calling" | "done" | "error";
+type CallState = "idle" | "calling" | "done" | "error" | "wait";
+
+/** Mirrors the demo cooldown in /api/care/call so the button never fires early. */
+const DEMO_COOLDOWN_MS = 8_000;
 
 export default function DemoCallButton({
   sessionId,
@@ -34,6 +37,23 @@ export default function DemoCallButton({
 }) {
   const [state, setState] = useState<CallState>("idle");
   const [message, setMessage] = useState<string | null>(null);
+  const [waitUntil, setWaitUntil] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!waitUntil) return;
+    let timer: ReturnType<typeof setInterval>;
+    const tick = () => {
+      const next = Date.now();
+      setNow(next);
+      if (next >= waitUntil) clearInterval(timer);
+    };
+    timer = setInterval(tick, 400);
+    tick();
+    return () => clearInterval(timer);
+  }, [waitUntil]);
+
+  const waitSeconds = waitUntil > now ? Math.ceil((waitUntil - now) / 1000) : 0;
 
   // The patient laptop keeps its pair token in localStorage; the nurse portal
   // passes the token from the scanned QR. Either is accepted by the server.
@@ -44,7 +64,7 @@ export default function DemoCallButton({
   }, [pair, sessionId]);
 
   const call = useCallback(async () => {
-    if (!sessionId || state === "calling") return;
+    if (!sessionId || state === "calling" || waitSeconds > 0) return;
     if (typeof window !== "undefined") {
       const confirmed = window.confirm(
         "This places a real phone call to the care line. When you answer, the CareSpeak agent will brief you on the patient and their live readings. Continue?"
@@ -57,12 +77,24 @@ export default function DemoCallButton({
     try {
       const res = await carePortalCall(sessionId, resolvedPair, { reason: "demo" });
       setState("done");
+      setWaitUntil(Date.now() + DEMO_COOLDOWN_MS);
+      setNow(Date.now());
       setMessage(`Calling ${res.to}. The CareSpeak agent will brief you as soon as you answer.`);
     } catch (err) {
-      setState("error");
-      setMessage(err instanceof CareApiError ? err.message : "Could not place the call. Try again.");
+      if (err instanceof CareApiError && err.status === 429) {
+        // A call is already ringing (possibly placed from the other device).
+        // Treat it as information, not a failure, and count down in the button.
+        const seconds = Number(err.message.match(/in (\d+)s/i)?.[1] ?? 0) || 8;
+        setState("wait");
+        setWaitUntil(Date.now() + Math.max(1, seconds) * 1000);
+        setNow(Date.now());
+        setMessage("A call from this session is already ringing — answer your phone, then try again.");
+      } else {
+        setState("error");
+        setMessage(err instanceof CareApiError ? err.message : "Could not place the call. Try again.");
+      }
     }
-  }, [resolvedPair, sessionId, state]);
+  }, [resolvedPair, sessionId, state, waitSeconds]);
 
   return (
     <div
@@ -80,11 +112,23 @@ export default function DemoCallButton({
         <button
           type="button"
           onClick={() => void call()}
-          disabled={!sessionId || state === "calling"}
+          disabled={!sessionId || state === "calling" || waitSeconds > 0}
           className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#c63a22] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#a92f1b] disabled:opacity-50"
         >
-          {state === "calling" ? <Loader2 className="h-4 w-4 animate-spin" /> : <PhoneCall className="h-4 w-4" />}
-          {state === "calling" ? "Calling..." : state === "done" ? "Call again" : label}
+          {state === "calling" ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : waitSeconds > 0 ? (
+            <Clock3 className="h-4 w-4" />
+          ) : (
+            <PhoneCall className="h-4 w-4" />
+          )}
+          {state === "calling"
+            ? "Calling..."
+            : waitSeconds > 0
+              ? `Wait ${waitSeconds}s`
+              : state === "done"
+                ? "Call again"
+                : label}
         </button>
       </div>
 
@@ -93,11 +137,15 @@ export default function DemoCallButton({
           className={`mt-2.5 flex items-start gap-2 rounded-xl border px-3 py-2 text-xs ${
             state === "error"
               ? "border-red-200 bg-red-50 text-red-700"
-              : "border-emerald-200 bg-emerald-50 text-emerald-800"
+              : state === "wait"
+                ? "border-amber-200 bg-amber-50 text-amber-800"
+                : "border-emerald-200 bg-emerald-50 text-emerald-800"
           }`}
         >
           {state === "error" ? (
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          ) : state === "wait" ? (
+            <Clock3 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           ) : (
             <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           )}
