@@ -310,8 +310,10 @@ export default function BrowserCall({
     };
   }, [pair, sessionId]);
 
-  // Keep the transcript pinned to the newest turn.
+  // Keep the transcript pinned to the newest turn (not on first paint, so the
+  // page never scrolls itself away from the header).
   useEffect(() => {
+    if (!turns.length && !thinking) return;
     endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
   }, [turns.length, thinking]);
 
@@ -326,22 +328,32 @@ export default function BrowserCall({
     setSendError(null);
 
     const opening = context?.patient
-      ? carePortalBrief(sessionId, pairRef.current)
-          .then((res) => res.brief.line)
-          .catch(() => "")
+      ? (() => {
+          thinkingRef.current = true;
+          setThinking(true);
+          return carePortalBrief(sessionId, pairRef.current)
+            .then((res) => res.brief.line)
+            .catch(() => "");
+        })()
       : Promise.resolve(
           "Hi, this is the CareSpeak assistant. No patient is linked to this session yet, so I can only answer general questions. Link a patient in the nurse portal to hear their briefing."
         );
 
-    void opening.then((line) => {
-      if (!startedRef.current) return;
-      if (line) {
-        append("agent", line);
-        speakLine(line);
-      } else {
-        resumeListening();
-      }
-    });
+    void opening
+      .then((line) => {
+        if (!startedRef.current) return;
+        if (line) {
+          append("agent", line);
+          speakLine(line);
+        } else {
+          resumeListening();
+        }
+      })
+      .finally(() => {
+        thinkingRef.current = false;
+        setThinking(false);
+        if (!speakingRef.current) resumeListening();
+      });
   }, [append, context?.patient, resumeListening, sessionId, speakLine]);
 
   const endCall = useCallback(() => {
@@ -531,14 +543,29 @@ export default function BrowserCall({
               <button
                 type="button"
                 onClick={toggleMic}
-                className={`inline-flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition sm:flex-none ${
+                disabled={thinking || speaking}
+                className={`inline-flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition disabled:opacity-60 sm:flex-none ${
                   listening
                     ? "bg-[#c63a22] text-white hover:bg-[#a92f1b]"
                     : "border border-[#e5dedb] bg-white text-[#1f1f1f] hover:border-[#c63a22]"
                 }`}
               >
-                {listening ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
-                {listening ? "Listening — tap to mute" : "Mic is off — tap to talk"}
+                {speaking ? (
+                  <Volume2 className="h-4 w-4" />
+                ) : thinking ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : listening ? (
+                  <Mic className="h-4 w-4" />
+                ) : (
+                  <MicOff className="h-4 w-4" />
+                )}
+                {speaking
+                  ? "Agent speaking…"
+                  : thinking
+                    ? "Checking…"
+                    : listening
+                      ? "Listening — tap to mute"
+                      : "Mic is off — tap to talk"}
               </button>
               <button
                 type="button"
