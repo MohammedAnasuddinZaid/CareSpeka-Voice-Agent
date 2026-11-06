@@ -20,6 +20,21 @@ Nothing is sent to a paid API. If the on-device models are not loaded, a determi
 
 ---
 
+## 1b. Free browser call — no telephony, no charges
+
+`/care/phone?session=…&pair=…` is a single-device voice agent that uses the **same portal brain** as the telephone webhook:
+
+- the agent greets the caller with the linked patient's briefing (name, concern, live readings);
+- the caller speaks with the browser Web Speech API, or types when it is unavailable;
+- replies are spoken with speech synthesis and always shown as a transcript;
+- "send a message to …" dictation is executed for real against the patient record.
+
+It needs **no Twilio account, no phone number, and no telephony minutes**. The patient's screen (`DemoCallButton`) and the nurse portal (`PortalAssistant`) both expose it as **Browser call**; the panel also shows a QR that moves the same call to a phone.
+
+> **Twilio trial limitation.** Twilio's free trial rejects every custom-TwiML outbound call (`trial accounts have limited parameter access`). The app detects that error (`kind: "trial_custom_call"`) and opens the free browser call instead of showing the raw provider message. Real PSTN calls work after upgrading Twilio and verifying the sender/recipient numbers.
+
+---
+
 ## 2. Architecture
 
 ```

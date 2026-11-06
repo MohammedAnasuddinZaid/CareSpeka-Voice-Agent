@@ -33,6 +33,7 @@ import {
   Activity,
   Link2,
   PhoneCall,
+  Monitor,
   ShieldCheck,
 } from "lucide-react";
 import {
@@ -48,6 +49,7 @@ import {
   type PortalSeverity,
 } from "@/lib/careClient";
 import { speak, speechSynthesisAvailable, stopSpeaking } from "@/lib/care/browserAI";
+import FreeCallPanel from "@/components/care/FreeCallPanel";
 
 // ---------------------------------------------------------------------------
 // speech input (browser Web Speech API, optional)
@@ -153,6 +155,7 @@ export default function PortalAssistant({
   const [calling, setCalling] = useState(false);
   const [callNotice, setCallNotice] = useState<string | null>(null);
   const [callError, setCallError] = useState<string | null>(null);
+  const [freeOpen, setFreeOpen] = useState(false);
 
   const resolvedPair = useMemo(() => {
     if (pair) return pair;
@@ -205,6 +208,9 @@ export default function PortalAssistant({
         );
       } catch (err) {
         setCallError(err instanceof CareApiError ? err.message : "Could not place the call.");
+        // Twilio's free trial blocks custom call scripts — offer the free
+        // browser call in the same card instead of a raw provider error.
+        if (err instanceof CareApiError && err.code === "trial_custom_call") setFreeOpen(true);
       } finally {
         callingRef.current = false;
         setCalling(false);
@@ -489,6 +495,14 @@ export default function PortalAssistant({
             {calling ? "Calling" : "Call me"}
           </button>
           <button
+            onClick={() => setFreeOpen((v) => !v)}
+            disabled={!patient}
+            className="inline-flex items-center gap-1 rounded-full border border-[#ececec] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#6e6e6e] transition hover:border-[#c63a22] hover:text-[#c63a22] disabled:opacity-50"
+            title="Talk to the same agent in this browser — free, no phone charges"
+          >
+            <Monitor className="h-3 w-3" /> Browser call
+          </button>
+          <button
             onClick={() => setShowSettings((v) => !v)}
             className="inline-flex items-center gap-1 rounded-full border border-[#ececec] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#6e6e6e] hover:text-[#1f1f1f]"
             title="Advanced options"
@@ -497,6 +511,15 @@ export default function PortalAssistant({
           </button>
         </div>
       </div>
+
+      {freeOpen ? (
+        <div className="border-b border-[#f0e3de] px-4 py-3 sm:px-5">
+          <FreeCallPanel sessionId={sessionId} pair={resolvedPair} inline={false} />
+          <p className="mt-2 text-[11px] text-[#8a8a8a]">
+            The browser call opens in its own tab so it never competes with this assistant&apos;s microphone.
+          </p>
+        </div>
+      ) : null}
 
       {/* advanced options */}
       {showSettings ? (

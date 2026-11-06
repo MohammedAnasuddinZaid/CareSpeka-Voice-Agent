@@ -24,6 +24,7 @@ import {
   appendAudit,
   buildRecordContext,
   getPatient,
+  getSessionLoose,
   getSessionLink,
   linkSessionToPatient,
   listPatients,
@@ -311,12 +312,27 @@ function suggestionsFor(patient: ClinicalPatient | null, findings: SignalFinding
 
 export async function buildPortalContext(sessionId: string): Promise<PortalContext> {
   const store = await getSessionStore();
-  const [link, metricsMap, vitalsMap, patients] = await Promise.all([
+  const [storedLink, session, metricsMap, vitalsMap, patients] = await Promise.all([
     getSessionLink(sessionId).catch(() => null),
+    getSessionLoose(sessionId).catch(() => null),
     store.getMetrics(sessionId).catch(() => ({})),
     store.getVitals(sessionId).catch(() => ({})),
     listPatients().catch(() => [] as ClinicalPatient[]),
   ]);
+
+  // A session is created for a specific patient. Use that patient until the
+  // nurse explicitly re-links the session in the portal, so the assistant can
+  // brief the caller immediately after the QR is scanned.
+  const link: SessionPatientLink | null =
+    storedLink ??
+    (session?.patientId
+      ? {
+          sessionId,
+          patientId: session.patientId,
+          linkedAt: session.createdAt,
+          linkedBy: session.nurseName,
+        }
+      : null);
 
   const metrics = Object.values(metricsMap)[0] ?? null;
   const vitals = Object.values(vitalsMap)[0] ?? null;

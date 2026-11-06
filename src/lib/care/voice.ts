@@ -168,9 +168,89 @@ export interface PlaceCallInput {
   statusCallback?: string;
 }
 
-export type PlaceCallResult =
-  | { ok: true; sid: string; status: string }
-  | { ok: false; status: number; error: string };
+/**
+ * Why a dial failed, in terms the UI can act on. Twilio's free trial refuses
+ * every custom TwiML call, so the browser call (see /care/phone) is offered as
+ * a no-cost fallback instead of showing the raw Twilio error.
+ */
+export type PlaceCallFailureKind =
+  | "not_configured"
+  | "trial_custom_call"
+  | "unverified_recipient"
+  | "invalid_from"
+  | "network"
+  | "unknown";
+
+export const TRIAL_CUSTOM_CALL_MESSAGE =
+  "Twilio's free trial can't run CareSpeak's custom call script — it only allows Twilio's built-in demo templates. Use the free browser call instead (no Twilio minutes needed), or upgrade Twilio to enable real phone calls.";
+
+export interface PlaceCallFailure {
+  ok: false;
+  status: number;
+  error: string;
+  kind: PlaceCallFailureKind;
+  code?: number | string;
+  moreInfo?: string;
+  /** Raw provider message, kept for server logs — never shown as the main UI text. */
+  detail?: string;
+}
+
+export type PlaceCallResult = { ok: true; sid: string; status: string } | PlaceCallFailure;
+
+/**
+ * Turns a Twilio error response into a friendly failure. Exported so the
+ * mapping is covered by tests without placing a real call.
+ */
+export function classifyTwilioFailure(input: {
+  status: number;
+  code?: number | string;
+  message?: string;
+  moreInfo?: string;
+}): PlaceCallFailure {
+  const message = (input.message ?? "").trim();
+  const code = input.code;
+  const numeric = typeof code === "number" ? code : Number(code);
+
+  const base = {
+    ok: false as const,
+    status: input.status,
+    code,
+    moreInfo: input.moreInfo,
+    detail: message || undefined,
+  };
+
+  if (
+    /trial accounts have limited parameter access/i.test(message) ||
+    /upgrade your account to unlock full functionality/i.test(message) ||
+    numeric === 10002
+  ) {
+    return { ...base, kind: "trial_custom_call", error: TRIAL_CUSTOM_CALL_MESSAGE };
+  }
+
+  if (numeric === 32100 || numeric === 21608) {
+    return {
+      ...base,
+      kind: "unverified_recipient",
+      error:
+        "Twilio won't call that number yet: the free trial can only dial verified numbers. Verify the number in Twilio, or use the free browser call.",
+    };
+  }
+
+  if ([21212, 21264, 21267, 21607].includes(numeric)) {
+    return {
+      ...base,
+      kind: "invalid_from",
+      error:
+        "Twilio rejected the sender number. Set TWILIO_FROM_NUMBER to a verified Twilio number, or use the free browser call.",
+    };
+  }
+
+  return {
+    ...base,
+    kind: input.status === 0 ? "network" : "unknown",
+    error: message || `Twilio rejected the call (${input.status}).`,
+  };
+}
 
 export async function placeCall(input: PlaceCallInput): Promise<PlaceCallResult> {
   const sid = twilioAccountSid();
@@ -180,6 +260,7 @@ export async function placeCall(input: PlaceCallInput): Promise<PlaceCallResult>
     return {
       ok: false,
       status: 0,
+      kind: "not_configured",
       error:
         "Twilio is not fully configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_FROM_NUMBER.",
     };
@@ -209,18 +290,26 @@ export async function placeCall(input: PlaceCallInput): Promise<PlaceCallResult>
     const json = (await res.json().catch(() => ({}))) as {
       sid?: string;
       status?: string;
+      code?: number | string;
       message?: string;
+      more_info?: string;
     };
     if (!res.ok) {
-      return {
-        ok: false,
+      return classifyTwilioFailure({
         status: res.status,
-        error: json.message ?? `Twilio rejected the call (${res.status}).`,
-      };
+        code: json.code,
+        message: json.message,
+        moreInfo: json.more_info,
+      });
     }
     return { ok: true, sid: json.sid ?? "", status: json.status ?? "queued" };
   } catch (err) {
-    return { ok: false, status: 0, error: err instanceof Error ? err.message : "Could not reach Twilio." };
+    return {
+      ok: false,
+      status: 0,
+      kind: "network",
+      error: err instanceof Error ? err.message : "Could not reach Twilio.",
+    };
   }
 }
 

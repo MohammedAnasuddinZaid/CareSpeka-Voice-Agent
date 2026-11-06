@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   buildWebhookUrl,
   checkCooldown,
+  classifyTwilioFailure,
   clearCooldown,
   emergencyNumbers,
   escapeXml,
@@ -9,6 +10,7 @@ import {
   normalizePhone,
   placeCall,
   resetCooldownsForTests,
+  TRIAL_CUSTOM_CALL_MESSAGE,
   twilioConfigured,
   twilioFromNumber,
   twimlHangup,
@@ -147,8 +149,7 @@ describe("call cooldown", () => {
 });
 
 describe("placing a call", () => {
-  it("sends only parameters a trial account accepts", async () => {
-    process.env.TWILIO_ACCOUNT_SID = "AC123";
+  it("sends only parameters a trial account accepts", async () => {    process.env.TWILIO_ACCOUNT_SID = "AC123";
     process.env.TWILIO_AUTH_TOKEN = "token";
     process.env.TWILIO_FROM_NUMBER = "+919908786211";
 
@@ -173,6 +174,36 @@ describe("placing a call", () => {
     } finally {
       global.fetch = original;
     }
+  });
+});
+
+describe("Twilio failure mapping", () => {
+  it("turns the trial custom-call rejection into a free-call suggestion", () => {
+    const res = classifyTwilioFailure({
+      status: 400,
+      code: 0,
+      message:
+        "Invalid or disallowed parameters provided - trial accounts have limited parameter access, upgrade your account to unlock full functionality",
+      moreInfo: "https://www.twilio.com/docs/errors/0",
+    });
+    expect(res.ok).toBe(false);
+    expect(res.kind).toBe("trial_custom_call");
+    expect(res.error).toBe(TRIAL_CUSTOM_CALL_MESSAGE);
+    expect(res.status).toBe(400);
+    expect(res.detail).toContain("trial accounts");
+  });
+
+  it("classifies unverified recipients and sender problems", () => {
+    expect(classifyTwilioFailure({ status: 400, code: 32100 }).kind).toBe("unverified_recipient");
+    expect(classifyTwilioFailure({ status: 400, code: 21608 }).kind).toBe("unverified_recipient");
+    expect(classifyTwilioFailure({ status: 400, code: 21212 }).kind).toBe("invalid_from");
+    expect(classifyTwilioFailure({ status: 400, code: 21264 }).kind).toBe("invalid_from");
+  });
+
+  it("keeps unknown provider messages but marks them unknown", () => {
+    const res = classifyTwilioFailure({ status: 500, code: 99999, message: "Something odd" });
+    expect(res.kind).toBe("unknown");
+    expect(res.error).toBe("Something odd");
   });
 });
 

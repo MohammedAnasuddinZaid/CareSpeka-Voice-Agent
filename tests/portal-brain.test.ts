@@ -13,6 +13,7 @@ import {
 import {
   addRecord,
   buildRecordContext,
+  createSession,
   deleteRecord,
   getRecord,
   getSessionLink,
@@ -197,8 +198,21 @@ describe("portal context + answering", () => {
     expect(answer.answer.toLowerCase()).toContain("no patient is linked");
   });
 
-  it("reads live metrics from the session store and reports them", async () => {
-    await linkSessionToPatient("LIVE01", "pt_0001");
+  it("uses the session's own patient before the nurse links one", async () => {
+    const { session } = await createSession({
+      patientId: "pt_0001",
+      nurseId: "nurse.demo",
+      nurseName: "Nurse Demo",
+    });
+    // API routes normalise ids to uppercase; the row itself is lowercase.
+    const ctx = await buildPortalContext(session.id.toUpperCase());
+    expect(ctx.patient?.id).toBe("pt_0001");
+    expect(ctx.link?.patientId).toBe("pt_0001");
+    expect(ctx.suggestedQuestions.length).toBeGreaterThan(0);
+    expect((await askPortal(session.id.toUpperCase(), "who is this?")).patientId).toBe("pt_0001");
+  });
+
+  it("reads live metrics from the session store and reports them", async () => {    await linkSessionToPatient("LIVE01", "pt_0001");
     const store = await getSessionStore();
     await store.setMetrics("LIVE01", "cam1", { alertnessScore: 12, blinkRate: 1, movementActivity: 0.01 });
 

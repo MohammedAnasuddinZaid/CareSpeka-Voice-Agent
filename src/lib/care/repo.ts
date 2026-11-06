@@ -149,6 +149,19 @@ export async function getSession(id: string): Promise<CareSession | null> {
   return ((await d.getDoc(K.session(id))) as CareSession | null) ?? null;
 }
 
+/**
+ * Session lookup that tolerates the uppercase form used by the API routes.
+ * Care session ids are lowercase (`wc_...`); most endpoints normalise the
+ * caller-supplied id to uppercase, so a direct lookup would miss the row.
+ */
+export async function getSessionLoose(id: string): Promise<CareSession | null> {
+  const direct = await getSession(id);
+  if (direct) return direct;
+  const lower = id.toLowerCase();
+  if (lower !== id) return getSession(lower);
+  return null;
+}
+
 export async function listSessions(limit = 50): Promise<CareSession[]> {
   await ensureDemoSeed();
   const d = await getDriver();

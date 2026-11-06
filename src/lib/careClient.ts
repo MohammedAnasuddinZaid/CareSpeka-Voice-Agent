@@ -490,6 +490,22 @@ export async function carePortalBrief(session: string, pair?: string | null) {
   });
 }
 
+// --- free browser call (no telephony, no charges) ---------------------------
+
+export interface PhoneQr {
+  /** Absolute /care/phone URL that carries the session capability. */
+  url: string;
+  /** PNG data URL for that URL. */
+  qrDataUrl: string;
+}
+
+/** QR/link that opens the free browser call on a phone. */
+export async function carePhoneQr(session: string, pair?: string | null) {
+  const qs = new URLSearchParams({ session });
+  if (pair) qs.set("pair", pair);
+  return request<PhoneQr>(`/api/care/phone/qr?${qs.toString()}`);
+}
+
 // --- emergency / demo phone call (real Twilio voice call) -------------------
 
 export interface CareCallResult {

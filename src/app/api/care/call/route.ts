@@ -44,6 +44,9 @@ interface Attempt {
   sid?: string;
   status?: string;
   error?: string;
+  kind?: string;
+  code?: number | string;
+  moreInfo?: string;
 }
 
 export async function POST(req: NextRequest) {
@@ -96,7 +99,14 @@ export async function POST(req: NextRequest) {
     attempts.push(
       placed.ok
         ? { to, ok: true, sid: placed.sid, status: placed.status }
-        : { to, ok: false, error: placed.error }
+        : {
+            to,
+            ok: false,
+            error: placed.error,
+            kind: placed.kind,
+            code: placed.code,
+            moreInfo: placed.moreInfo,
+          }
     );
   }
 
@@ -119,7 +129,11 @@ export async function POST(req: NextRequest) {
   });
 
   if (!first) {
-    return fail(attempts[0]?.error ?? "Twilio could not place the call.", 502, { attempts });
+    return fail(attempts[0]?.error ?? "Twilio could not place the call.", 502, {
+      code: attempts[0]?.kind ?? "unknown",
+      moreInfo: attempts[0]?.moreInfo,
+      attempts,
+    });
   }
 
   return ok({

@@ -13,9 +13,10 @@
  * enforces a short cooldown so the free Twilio balance cannot be hammered.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, Clock3, Loader2, PhoneCall } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock3, Loader2, PhoneCall, Monitor } from "lucide-react";
 import { CareApiError, carePortalCall } from "@/lib/careClient";
 import { getOrCreatePairToken } from "@/lib/pairing";
+import FreeCallPanel from "@/components/care/FreeCallPanel";
 
 type CallState = "idle" | "calling" | "done" | "error" | "wait";
 
@@ -39,6 +40,7 @@ export default function DemoCallButton({
   const [message, setMessage] = useState<string | null>(null);
   const [waitUntil, setWaitUntil] = useState(0);
   const [now, setNow] = useState(() => Date.now());
+  const [freeOpen, setFreeOpen] = useState(false);
 
   useEffect(() => {
     if (!waitUntil) return;
@@ -92,6 +94,9 @@ export default function DemoCallButton({
       } else {
         setState("error");
         setMessage(err instanceof CareApiError ? err.message : "Could not place the call. Try again.");
+        // Twilio's trial cannot run our TwiML. Offer the free browser call
+        // instead of leaving the user with a dead end.
+        if (err instanceof CareApiError && err.code === "trial_custom_call") setFreeOpen(true);
       }
     }
   }, [resolvedPair, sessionId, state, waitSeconds]);
@@ -109,27 +114,38 @@ export default function DemoCallButton({
             Calls the care line and lets the CareSpeak agent read the patient&apos;s situation aloud.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => void call()}
-          disabled={!sessionId || state === "calling" || waitSeconds > 0}
-          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#c63a22] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#a92f1b] disabled:opacity-50"
-        >
-          {state === "calling" ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : waitSeconds > 0 ? (
-            <Clock3 className="h-4 w-4" />
-          ) : (
-            <PhoneCall className="h-4 w-4" />
-          )}
-          {state === "calling"
-            ? "Calling..."
-            : waitSeconds > 0
-              ? `Wait ${waitSeconds}s`
-              : state === "done"
-                ? "Call again"
-                : label}
-        </button>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void call()}
+            disabled={!sessionId || state === "calling" || waitSeconds > 0}
+            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#c63a22] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#a92f1b] disabled:opacity-50"
+          >
+            {state === "calling" ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : waitSeconds > 0 ? (
+              <Clock3 className="h-4 w-4" />
+            ) : (
+              <PhoneCall className="h-4 w-4" />
+            )}
+            {state === "calling"
+              ? "Calling..."
+              : waitSeconds > 0
+                ? `Wait ${waitSeconds}s`
+                : state === "done"
+                  ? "Call again"
+                  : label}
+          </button>
+          <button
+            type="button"
+            onClick={() => setFreeOpen((v) => !v)}
+            disabled={!sessionId}
+            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-[#e5dedb] bg-white px-4 py-2.5 text-sm font-semibold text-[#1f1f1f] transition hover:border-[#c63a22] hover:text-[#c63a22] disabled:opacity-50"
+            title="Talk to the same agent in this browser — free, no phone call"
+          >
+            <Monitor className="h-4 w-4" /> Browser call
+          </button>
+        </div>
       </div>
 
       {message ? (
@@ -151,6 +167,10 @@ export default function DemoCallButton({
           )}
           <span>{message}</span>
         </div>
+      ) : null}
+
+      {freeOpen ? (
+        <FreeCallPanel sessionId={sessionId} pair={resolvedPair} className="mt-3" defaultOpen />
       ) : null}
     </div>
   );
