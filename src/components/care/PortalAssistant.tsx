@@ -556,9 +556,9 @@ const removePatient = async (id: string) => {
 
       {freeOpen ? (
         <div className="border-b border-[#f0e3de] px-4 py-3 sm:px-5">
-          <FreeCallPanel sessionId={sessionId} pair={resolvedPair} inline={false} />
+          <FreeCallPanel sessionId={sessionId} pair={resolvedPair} inline />
           <p className="mt-2 text-[11px] text-[#8a8a8a]">
-            The browser call opens in its own tab so it never competes with this assistant&apos;s microphone.
+            The browser call runs here; your chat microphone pauses while it is active.
           </p>
         </div>
       ) : null}
@@ -871,11 +871,11 @@ const removePatient = async (id: string) => {
           <button
             type="button"
             onClick={toggleListen}
-            disabled={!patient}
+            disabled={!patient || freeOpen}
             className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-white transition disabled:opacity-40 ${
               listening ? "animate-pulse bg-red-600" : "bg-[#1f1f1f] hover:bg-black"
             }`}
-            title={listening ? "Stop listening" : "Speak your question"}
+            title={freeOpen ? "Voice chat paused while the browser call is active" : listening ? "Stop listening" : "Speak your question"}
           >
             {listening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
           </button>
