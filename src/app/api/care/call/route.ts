@@ -101,6 +101,10 @@ export async function POST(req: NextRequest) {
   }
 
   const first = attempts.find((a) => a.ok);
+  // The dial never landed (bad sender, unverified number, Twilio outage).
+  // Release the window before any bookkeeping so a retry is never blocked.
+  if (!first) await clearCooldown(`${session}:${reason}`);
+
   await appendAudit({
     actorRole: access.actor?.role ?? "system",
     actorId: access.actor?.userId,
@@ -115,9 +119,6 @@ export async function POST(req: NextRequest) {
   });
 
   if (!first) {
-    // The dial never landed (bad sender, unverified number, Twilio outage).
-    // Release the window so the nurse can correct it and retry immediately.
-    await clearCooldown(`${session}:${reason}`);
     return fail(attempts[0]?.error ?? "Twilio could not place the call.", 502, { attempts });
   }
 
