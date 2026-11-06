@@ -19,6 +19,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Eye,
+  Link2,
   Loader2,
   Mic,
   MicOff,
@@ -30,9 +31,12 @@ import {
 } from "lucide-react";
 import {
   CareApiError,
+  careCreatePatient,
+  careDeletePatient,
   carePortalAsk,
   carePortalBrief,
   carePortalContext,
+  carePortalLink,
   type PortalContext,
 } from "@/lib/careClient";
 import { speak, speechSynthesisAvailable, stopSpeaking } from "@/lib/care/browserAI";
@@ -101,6 +105,17 @@ export default function BrowserCall({
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
   const [sendError, setSendError] = useState<string | null>(null);
+
+  // patient linking (so a sync session can be attached to a real patient)
+  const [pickedPatient, setPickedPatient] = useState("");
+  const [linking, setLinking] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const [showAddPatient, setShowAddPatient] = useState(false);
+  const [newPatientName, setNewPatientName] = useState("");
+  const [newPatientConcern, setNewPatientConcern] = useState("");
+  const [creatingPatient, setCreatingPatient] = useState(false);
+  const [showDemoPatients, setShowDemoPatients] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const pairRef = useRef<string | null>(pair);
   pairRef.current = pair;
@@ -293,7 +308,10 @@ export default function BrowserCall({
     setLoadError(null);
     carePortalContext(sessionId, pair)
       .then((res) => {
-        if (active) setContext(res.context);
+        if (active) {
+          setContext(res.context);
+          if (res.context.link) setPickedPatient(res.context.link.patientId);
+        }
       })
       .catch((err) => {
         if (active) {
@@ -393,6 +411,76 @@ export default function BrowserCall({
     });
   }, [resumeListening]);
 
+  // --- patient linking ------------------------------------------------------
+
+  const visiblePatients = (context?.patients ?? []).filter(
+    (p) => showDemoPatients || !p.synthetic
+  );
+
+  const linkPatient = useCallback(async () => {
+    if (!sessionId || !pickedPatient || linking) return;
+    setLinking(true);
+    setLinkError(null);
+    try {
+      const res = await carePortalLink(sessionId, pickedPatient, pairRef.current);
+      setContext(res.context);
+      setPickedPatient(res.context.link?.patientId ?? pickedPatient);
+    } catch (err) {
+      setLinkError(err instanceof CareApiError ? err.message : "Could not link the patient.");
+    } finally {
+      setLinking(false);
+    }
+  }, [linking, pickedPatient, sessionId]);
+
+  const addPatient = useCallback(
+    async (e: FormEvent) => {
+      e.preventDefault();
+      if (!newPatientName.trim() || creatingPatient) return;
+      setCreatingPatient(true);
+      setLinkError(null);
+      try {
+        const res = await careCreatePatient({
+          displayName: newPatientName.trim(),
+          primaryConcern: newPatientConcern.trim() || undefined,
+        });
+        const created = res.patient;
+        // link it straight away
+        const linked = await carePortalLink(sessionId, created.id, pairRef.current);
+        setContext(linked.context);
+        setPickedPatient(created.id);
+        setNewPatientName("");
+        setNewPatientConcern("");
+        setShowAddPatient(false);
+      } catch (err) {
+        setLinkError(err instanceof CareApiError ? err.message : "Could not add the patient.");
+      } finally {
+        setCreatingPatient(false);
+      }
+    },
+    [creatingPatient, newPatientConcern, newPatientName, sessionId]
+  );
+
+  const removePatient = useCallback(
+    async (id: string) => {
+      if (!sessionId) return;
+      if (!window.confirm("Remove this patient and their records?")) return;
+      setDeletingId(id);
+      setLinkError(null);
+      try {
+        await careDeletePatient(id);
+        // refresh context
+        const res = await carePortalContext(sessionId, pairRef.current);
+        setContext(res.context);
+        if (pickedPatient === id) setPickedPatient("");
+      } catch (err) {
+        setLinkError(err instanceof CareApiError ? err.message : "Could not remove the patient.");
+      } finally {
+        setDeletingId(null);
+      }
+    },
+    [pickedPatient, sessionId]
+  );
+
   const send = useCallback(
     (e?: FormEvent) => {
       e?.preventDefault();
@@ -467,6 +555,115 @@ export default function BrowserCall({
               <span className="font-semibold text-[#1f1f1f]">{c.value}</span>
             </span>
           ))}
+        </div>
+      ) : null}
+
+      {/* patient linking */}
+      {!loadError && !loading ? (
+        <div className="border-b border-[#f4efec] px-4 py-3 sm:px-5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-semibold text-[#6e6e6e]">Patient:</span>
+            {context?.patient ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
+                {context.patient.displayName}
+                {context.patient.room ? ` · ${context.patient.room}` : ""}
+              </span>
+            ) : (
+              <span className="text-[11px] text-amber-700">Not linked yet</span>
+            )}
+            <select
+              value={pickedPatient}
+              onChange={(e) => setPickedPatient(e.target.value)}
+              className="min-w-0 flex-1 rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs outline-none focus:border-[#c63a22]"
+            >
+              <option value="">Choose a patient…</option>
+              {visiblePatients.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.displayName}
+                  {p.room ? ` — ${p.room}` : ""}
+                  {p.synthetic ? " (demo)" : ""}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => void linkPatient()}
+              disabled={!pickedPatient || linking}
+              className="inline-flex items-center gap-1 rounded-lg bg-[#c63a22] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#a92f1b] disabled:opacity-50"
+            >
+              {linking ? <Loader2 className="h-3 w-3 animate-spin" /> : <Link2 className="h-3 w-3" />}
+              Link
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowAddPatient((v) => !v)}
+              className="inline-flex items-center gap-1 rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-semibold text-[#1f1f1f] hover:border-[#c63a22]"
+            >
+              + Add patient
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowDemoPatients((v) => !v)}
+              className="text-[10px] font-semibold text-[#8a8a8a] hover:text-[#c63a22]"
+            >
+              {showDemoPatients ? "Hide demo" : "Show demo"}
+            </button>
+          </div>
+
+          {linkError ? (
+            <div className="mt-2 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] text-red-700">
+              <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" /> {linkError}
+            </div>
+          ) : null}
+
+          {showAddPatient ? (
+            <form onSubmit={addPatient} className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+              <input
+                value={newPatientName}
+                onChange={(e) => setNewPatientName(e.target.value)}
+                placeholder="Patient name"
+                required
+                className="rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs outline-none focus:border-[#c63a22]"
+              />
+              <input
+                value={newPatientConcern}
+                onChange={(e) => setNewPatientConcern(e.target.value)}
+                placeholder="Primary concern (optional)"
+                className="rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs outline-none focus:border-[#c63a22]"
+              />
+              <button
+                type="submit"
+                disabled={creatingPatient || !newPatientName.trim()}
+                className="inline-flex items-center justify-center gap-1 rounded-lg bg-[#1f1f1f] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#c63a22] disabled:opacity-50"
+              >
+                {creatingPatient ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                Add &amp; link
+              </button>
+            </form>
+          ) : null}
+
+          {/* remove a patient */}
+          {visiblePatients.length ? (
+            <details className="mt-2">
+              <summary className="cursor-pointer text-[10px] font-semibold text-[#8a8a8a] hover:text-red-600">
+                Remove a patient
+              </summary>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {visiblePatients.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => void removePatient(p.id)}
+                    disabled={deletingId === p.id}
+                    className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[10px] font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50"
+                  >
+                    {deletingId === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                    Remove {p.displayName}
+                  </button>
+                ))}
+              </div>
+            </details>
+          ) : null}
         </div>
       ) : null}
 

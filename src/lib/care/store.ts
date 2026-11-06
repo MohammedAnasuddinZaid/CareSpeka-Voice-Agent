@@ -241,6 +241,7 @@ const K = {
   audit: "care:audit",
   patient: (id: string) => `care:patient:${id}`,
   patientIndex: "care:patient:index",
+  patientSeeded: "care:patient:seeded",
   tasks: "care:tasks",
   messages: "care:messages",
   record: (id: string) => `care:record:${id}`,

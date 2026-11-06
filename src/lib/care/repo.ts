@@ -39,10 +39,20 @@ export async function getStoreInfo(): Promise<{ driver: DriverName; persistent: 
 
 async function ensurePatientsSeeded(): Promise<void> {
   const d = await getDriver();
+  const seeded = await d.getDoc(K.patientSeeded);
   const index = (await d.getDoc(K.patientIndex)) as string[] | null;
-  if (index && index.length) return;
+  if (seeded) return;
+  if (index && index.length) {
+    await d.setDoc(K.patientSeeded, true);
+    return;
+  }
+  if ((process.env.CARE_SEED_DEMO ?? "").toLowerCase() === "false") {
+    await d.setDoc(K.patientSeeded, true);
+    return;
+  }
   for (const p of SYNTHETIC_PATIENTS) await d.setDoc(K.patient(p.id), p);
   await d.setDoc(K.patientIndex, SYNTHETIC_PATIENTS.map((p) => p.id));
+  await d.setDoc(K.patientSeeded, true);
 }
 
 export async function listPatients(): Promise<ClinicalPatient[]> {
@@ -107,9 +117,35 @@ export async function createPatient(input: {
   return patient;
 }
 
-// ---------------------------------------------------------------------------
-// sessions
-// ---------------------------------------------------------------------------
+/**
+ * Removes a patient and their records. Used to clear demo patients so only the
+ * real patient(s) remain. Never removes the seeded demo data's seed marker, so
+ * deleted patients stay deleted.
+ */
+export async function deletePatient(id: string): Promise<boolean> {
+  await ensurePatientsSeeded();
+  const d = await getDriver();
+  const patient = (await d.getDoc(K.patient(id))) as ClinicalPatient | null;
+  if (!patient) return false;
+
+  // remove their records
+  const recordIds = (await d.getList(K.recordIndex)) as string[];
+  const keptRecordIds: string[] = [];
+  for (const rid of recordIds) {
+    const rec = (await d.getDoc(K.record(rid))) as { patientId?: string } | null;
+    if (rec?.patientId === id) {
+      await d.del(K.record(rid));
+      continue;
+    }
+    if (rec) keptRecordIds.push(rid);
+  }
+  await d.setDoc(K.recordIndex, keptRecordIds);
+
+  await d.del(K.patient(id));
+  const index = ((await d.getDoc(K.patientIndex)) as string[] | null) ?? [];
+  await d.setDoc(K.patientIndex, index.filter((x) => x !== id));
+  return true;
+}
 
 export async function createSession(input: {
   patientId: string;

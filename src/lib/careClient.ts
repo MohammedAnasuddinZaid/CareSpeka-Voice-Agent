@@ -130,6 +130,12 @@ export async function careCreatePatient(input: {
   });
 }
 
+export async function careDeletePatient(id: string) {
+  return request<{ deleted: string }>(`/api/care/patients/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
 export async function careGetPatient(id: string) {
   return request<{
     patient: ClinicalPatient;
@@ -425,7 +431,7 @@ export interface PortalContext {
   findings: PortalSignalFinding[];
   worst: PortalSeverity;
   engine: { gemini: boolean; model: string };
-  patients: Array<{ id: string; displayName: string; room?: string }>;
+  patients: Array<{ id: string; displayName: string; room?: string; synthetic?: boolean }>;
   suggestedQuestions: string[];
 }
 

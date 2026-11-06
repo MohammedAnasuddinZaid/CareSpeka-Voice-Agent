@@ -27,6 +27,7 @@ import {
   CareApiError,
   careAddRecord,
   careCreatePatient,
+  careDeletePatient,
   careDeleteRecord,
   careListPatients,
   careListRecords,
@@ -72,6 +73,7 @@ export default function RecordsIntake() {
   const [newRoom, setNewRoom] = useState("");
   const [newConcern, setNewConcern] = useState("");
   const [creating, setCreating] = useState(false);
+  const [deletingPatientId, setDeletingPatientId] = useState<string | null>(null);
 
   const fileRef = useRef<HTMLInputElement | null>(null);
 
@@ -196,6 +198,40 @@ export default function RecordsIntake() {
     } finally {
       setCreating(false);
     }
+  };
+
+  const removePatient = async (id: string, name: string) => {
+    if (!window.confirm(`Remove “${name}” and their records?`)) return;
+    setDeletingPatientId(id);
+    setError(null);
+    try {
+      await careDeletePatient(id);
+      setPatients((prev) => prev.filter((p) => p.id !== id));
+      if (patientId === id) setPatientId("");
+      flash(`${name} removed.`);
+    } catch (err) {
+      setError(err instanceof CareApiError ? err.message : "Could not remove the patient.");
+    } finally {
+      setDeletingPatientId(null);
+    }
+  };
+
+  const removeAllDemoPatients = async () => {
+    const demo = patients.filter((p) => p.synthetic);
+    if (!demo.length) return;
+    if (!window.confirm(`Remove all ${demo.length} demo patient(s)?`)) return;
+    setError(null);
+    for (const p of demo) {
+      try {
+        await careDeletePatient(p.id);
+      } catch {
+        /* continue */
+      }
+    }
+    const res = await careListPatients();
+    setPatients(res.patients);
+    if (!res.patients.some((p) => p.id === patientId)) setPatientId(res.patients[0]?.id ?? "");
+    flash("Demo patients removed.");
   };
 
   const submit = async (e: FormEvent) => {
@@ -432,6 +468,30 @@ export default function RecordsIntake() {
                 </option>
               ))}
             </select>
+            <div className="mt-1.5 flex flex-wrap items-center gap-2">
+              {patients.some((p) => p.synthetic) ? (
+                <button
+                  type="button"
+                  onClick={() => void removeAllDemoPatients()}
+                  className="text-[11px] font-semibold text-red-600 hover:underline"
+                >
+                  Remove all demo patients
+                </button>
+              ) : null}
+              {patientId ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const p = patients.find((x) => x.id === patientId);
+                    if (p) void removePatient(p.id, p.displayName);
+                  }}
+                  disabled={deletingPatientId === patientId}
+                  className="text-[11px] font-semibold text-red-600 hover:underline disabled:opacity-50"
+                >
+                  {deletingPatientId === patientId ? "Removing…" : "Remove selected patient"}
+                </button>
+              ) : null}
+            </div>
             {selectedPatient ? (
               <p className="mt-1.5 text-xs text-[#9ca3af]">
                 {selectedPatient.age != null ? `${selectedPatient.age}y` : "Age not recorded"}

@@ -38,6 +38,7 @@ import {
 } from "lucide-react";
 import {
   CareApiError,
+  careDeletePatient,
   carePortalAlert,
   carePortalAsk,
   carePortalBrief,
@@ -133,6 +134,8 @@ export default function PortalAssistant({
 
   const [pickedPatient, setPickedPatient] = useState("");
   const [linking, setLinking] = useState(false);
+  const [showDemoPatients, setShowDemoPatients] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
@@ -416,6 +419,23 @@ export default function PortalAssistant({
     }
   };
 
+const removePatient = async (id: string) => {
+  if (!sessionId) return;
+  if (!window.confirm("Remove this patient and their records?")) return;
+  setDeletingId(id);
+  setContextError(null);
+  try {
+    await careDeletePatient(id);
+    const res = await carePortalContext(sessionId, pairRef.current);
+    setContext(res.context);
+    if (pickedPatient === id) setPickedPatient("");
+  } catch (err) {
+    setContextError(err instanceof CareApiError ? err.message : "Could not remove the patient.");
+  } finally {
+    setDeletingId(null);
+  }
+};
+
   const refreshNow = async () => {
     const ctx = await loadContext(true);
     if (ctx?.patient) {
@@ -623,10 +643,13 @@ export default function PortalAssistant({
               className="flex-1 rounded-xl border border-[#e5e5e5] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#c63a22]"
             >
               <option value="">Choose a patient…</option>
-              {(context?.patients ?? []).map((p) => (
+              {(context?.patients ?? [])
+                .filter((p) => showDemoPatients || !p.synthetic)
+                .map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.displayName}
                   {p.room ? ` — ${p.room}` : ""}
+                  {p.synthetic ? " (demo)" : ""}
                 </option>
               ))}
             </select>
@@ -638,6 +661,38 @@ export default function PortalAssistant({
               {linking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
               Link patient
             </button>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowDemoPatients((v) => !v)}
+              className="text-[11px] font-semibold text-[#8a8a8a] hover:text-[#c63a22]"
+            >
+              {showDemoPatients ? "Hide demo patients" : "Show demo patients"}
+            </button>
+            {(context?.patients ?? []).filter((p) => showDemoPatients || !p.synthetic).length ? (
+              <details className="w-full">
+                <summary className="cursor-pointer text-[11px] font-semibold text-[#8a8a8a] hover:text-red-600">
+                  Remove a patient
+                </summary>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {(context?.patients ?? [])
+                    .filter((p) => showDemoPatients || !p.synthetic)
+                    .map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => void removePatient(p.id)}
+                        disabled={deletingId === p.id}
+                        className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[10px] font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50"
+                      >
+                        {deletingId === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                        Remove {p.displayName}
+                      </button>
+                    ))}
+                </div>
+              </details>
+            ) : null}
           </div>
           <a
             href={pickedPatient ? `/care/records?patientId=${encodeURIComponent(pickedPatient)}` : "/care/records"}

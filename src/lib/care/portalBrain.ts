@@ -323,16 +323,31 @@ export async function buildPortalContext(sessionId: string): Promise<PortalConte
   // A session is created for a specific patient. Use that patient until the
   // nurse explicitly re-links the session in the portal, so the assistant can
   // brief the caller immediately after the QR is scanned.
-  const link: SessionPatientLink | null =
-    storedLink ??
-    (session?.patientId
-      ? {
-          sessionId,
-          patientId: session.patientId,
-          linkedAt: session.createdAt,
-          linkedBy: session.nurseName,
-        }
-      : null);
+  let link: SessionPatientLink | null = storedLink;
+  if (!link && session?.patientId) {
+    link = {
+      sessionId,
+      patientId: session.patientId,
+      linkedAt: session.createdAt,
+      linkedBy: session.nurseName,
+    };
+  }
+  // For patient-device (sync) sessions there is no care session row, so the
+  // patient has to be chosen. When there is exactly one real patient in the
+  // store we link automatically, so a single-patient setup works out of the box.
+  if (!link && !session) {
+    const realPatients = patients.filter((p) => !p.synthetic);
+    const candidates = realPatients.length ? realPatients : patients;
+    if (candidates.length === 1) {
+      link = {
+        sessionId,
+        patientId: candidates[0].id,
+        linkedAt: new Date().toISOString(),
+        linkedBy: "auto",
+      };
+      void linkSessionToPatient(sessionId, candidates[0].id, "auto").catch(() => undefined);
+    }
+  }
 
   const metrics = Object.values(metricsMap)[0] ?? null;
   const vitals = Object.values(vitalsMap)[0] ?? null;
@@ -358,7 +373,7 @@ export async function buildPortalContext(sessionId: string): Promise<PortalConte
     findings,
     worst: worstSeverity(findings),
     engine: { gemini: geminiConfigured(), model: geminiModelLabel() },
-    patients: patients.map((p) => ({ id: p.id, displayName: p.displayName, room: p.room })),
+    patients: patients.map((p) => ({ id: p.id, displayName: p.displayName, room: p.room, synthetic: p.synthetic })),
     suggestedQuestions: suggestionsFor(patient, findings),
   };
 }
