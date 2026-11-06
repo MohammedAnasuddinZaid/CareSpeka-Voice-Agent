@@ -344,3 +344,125 @@ export async function careSendMessage(patientId: string, text: string) {
     body: JSON.stringify({ patientId, text }),
   });
 }
+
+// --- inserted patient records ----------------------------------------------
+
+export interface CareRecordSummary {
+  id: string;
+  patientId: string;
+  title: string;
+  source?: string;
+  chars: number;
+  createdAt: string;
+  createdBy?: string;
+  synthetic?: boolean;
+}
+
+export async function careListRecords(patientId?: string) {
+  const qs = patientId ? `?patientId=${encodeURIComponent(patientId)}` : "";
+  return request<{ records: CareRecordSummary[] }>(`/api/care/records${qs}`);
+}
+
+export async function careAddRecord(input: {
+  patientId: string;
+  title: string;
+  source?: string;
+  text: string;
+}) {
+  return request<{ record: CareRecordSummary }>("/api/care/records", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function careDeleteRecord(id: string) {
+  return request<{ deleted: true; id: string }>(`/api/care/records?id=${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+// --- nurse-portal live assistant (session scoped) --------------------------
+
+export type PortalSeverity = "critical" | "warning" | "watch" | "ok";
+
+export interface PortalSignalFinding {
+  key: string;
+  severity: PortalSeverity;
+  label: string;
+  reading: string;
+  note: string;
+}
+
+export interface PortalContext {
+  sessionId: string;
+  link: { sessionId: string; patientId: string; linkedAt: string; linkedBy?: string } | null;
+  patientId: string | null;
+  patient: ClinicalPatient | null;
+  records: Array<Pick<CareRecordSummary, "id" | "title" | "source" | "chars" | "createdAt">>;
+  recordChars: number;
+  metrics: {
+    blinkRate?: number;
+    alertnessScore?: number;
+    eyeClosureDuration?: number;
+    movementActivity?: number;
+    lastSeen?: string;
+  } | null;
+  vitals: Record<string, unknown> | null;
+  findings: PortalSignalFinding[];
+  worst: PortalSeverity;
+  engine: { gemini: boolean; model: string };
+  patients: Array<{ id: string; displayName: string; room?: string }>;
+  suggestedQuestions: string[];
+}
+
+export interface PortalAnswer {
+  answer: string;
+  engine: "gemini" | "rules";
+  model: string;
+  cached: boolean;
+  intent?: string;
+  patientId: string | null;
+}
+
+export interface PortalAlert {
+  line: string;
+  severity: PortalSeverity;
+  engine: "gemini" | "rules";
+  model: string;
+  cached: boolean;
+  findings: PortalSignalFinding[];
+}
+
+export async function carePortalContext(session: string, pair?: string | null) {
+  const qs = new URLSearchParams({ session });
+  if (pair) qs.set("pair", pair);
+  return request<{ context: PortalContext }>(`/api/care/portal?${qs.toString()}`);
+}
+
+export async function carePortalLink(session: string, patientId: string, pair?: string | null) {
+  return request<{ link: PortalContext["link"]; context: PortalContext }>("/api/care/portal", {
+    method: "POST",
+    body: JSON.stringify({ session, pair: pair ?? undefined, action: "link", patientId }),
+  });
+}
+
+export async function carePortalAsk(session: string, question: string, pair?: string | null) {
+  return request<{ result: PortalAnswer }>("/api/care/portal", {
+    method: "POST",
+    body: JSON.stringify({ session, pair: pair ?? undefined, action: "ask", question }),
+  });
+}
+
+export async function carePortalAlert(session: string, pair?: string | null, force = false) {
+  return request<{ alert: PortalAlert }>("/api/care/portal", {
+    method: "POST",
+    body: JSON.stringify({ session, pair: pair ?? undefined, action: "alert", force }),
+  });
+}
+
+export async function carePortalBrief(session: string, pair?: string | null) {
+  return request<{ brief: { line: string; engine: "gemini" | "rules"; model: string } }>("/api/care/portal", {
+    method: "POST",
+    body: JSON.stringify({ session, pair: pair ?? undefined, action: "brief" }),
+  });
+}

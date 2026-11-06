@@ -39,6 +39,7 @@ import {
   dailyGestureCounts,
 } from "@/lib/analytics";
 import PatientMetricsCard from "@/components/PatientMetricsCard";
+import PortalAssistant from "@/components/care/PortalAssistant";
 import ClinicianActions from "@/components/ClinicianActions";
 import {
   TYPE_CONFIG,
@@ -627,6 +628,9 @@ export default function NurseViewPage() {
             </motion.div>
           ))}
         </div>
+
+        {/* ── live talking assistant: inserted records + live metrics, speaks up on emergencies ── */}
+        <PortalAssistant sessionId={paired && sessionInput ? sessionInput : null} />
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
           {/* ── left: feed + analytics ── */}

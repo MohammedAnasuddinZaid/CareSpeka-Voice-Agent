@@ -255,6 +255,34 @@ export interface PatientMessage {
   readAt?: string;
 }
 
+/**
+ * A previous record the nurse inserted for the care assistant.
+ *
+ * Free text — a discharge summary, a lab report pasted in, a transfer note. The
+ * assistant reads it as context; nothing here is interpreted as a diagnosis.
+ */
+export interface PatientRecord {
+  id: string;
+  patientId: string;
+  title: string;
+  /** Free-form label, e.g. "Discharge summary", "Lab report", "Transfer note". */
+  source?: string;
+  text: string;
+  chars: number;
+  createdAt: string;
+  createdBy?: string;
+  /** True when it came from the synthetic demo seed. */
+  synthetic?: boolean;
+}
+
+/** Which patient a CareSpeak session (the QR the nurse scans) belongs to. */
+export interface SessionPatientLink {
+  sessionId: string;
+  patientId: string;
+  linkedAt: string;
+  linkedBy?: string;
+}
+
 // --- public views (never leak server secrets) ------------------------------
 
 export type CareSessionView = Omit<

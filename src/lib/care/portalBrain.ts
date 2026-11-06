@@ -1,0 +1,631 @@
+/**
+ * The nurse-portal brain.
+ *
+ * Server-only. Turns live device signals + the patient's clinical record + the
+ * records the nurse inserted into (a) a spoken alert when something crosses a
+ * threshold and (b) answers to free-text questions.
+ *
+ * Two engines, in order:
+ *   1. `answerQuestion` — deterministic, grounded in the structured record.
+ *      Used for the intents it knows (medications, allergies, observations...).
+ *   2. Gemini — used for everything else, with the same grounding rules. Every
+ *      answer is cached in Redis by content hash, so repeated questions and
+ *      repeated alert states cost nothing.
+ *
+ * If neither can answer, the reply says so. Nothing here invents a vital sign,
+ * a medication or a diagnosis.
+ */
+import { createHash } from "node:crypto";
+import type { DeviceVitals, PatientMetrics } from "@/types";
+import { getSessionStore } from "@/lib/server/store";
+import { CareKeys as K, getDriver } from "./store";
+import {
+  buildRecordContext,
+  getPatient,
+  getSessionLink,
+  linkSessionToPatient,
+  listPatients,
+  listRecords,
+} from "./repo";
+import { answerQuestion, type AssistantContext, type PatientContext } from "./assistant";
+import { geminiConfigured, geminiGenerate, geminiModelLabel } from "./gemini";
+import type { ClinicalPatient, PatientRecord, SessionPatientLink } from "./types";
+
+// ---------------------------------------------------------------------------
+// signals
+// ---------------------------------------------------------------------------
+
+export type Severity = "critical" | "warning" | "watch" | "ok";
+
+const RANK: Record<Severity, number> = { ok: 0, watch: 1, warning: 2, critical: 3 };
+
+export interface SignalFinding {
+  /** Stable id — used for dedupe and cache keys. */
+  key: string;
+  severity: Severity;
+  label: string;
+  reading: string;
+  note: string;
+}
+
+export function severityRank(s: Severity): number {
+  return RANK[s];
+}
+
+export function worstSeverity(findings: SignalFinding[]): Severity {
+  return findings.reduce<Severity>((worst, f) => (RANK[f.severity] > RANK[worst] ? f.severity : worst), "ok");
+}
+
+/**
+ * Applies CareSpeak's published thresholds (see ESCALATION_RULES) plus a few
+ * conservative wearable checks. Pure and testable. Never diagnoses — it only
+ * reports readings and whether they sit outside a stated threshold.
+ */
+export function analyzeSignals(
+  metrics: PatientMetrics | null | undefined,
+  vitals?: DeviceVitals | null
+): SignalFinding[] {
+  const out: SignalFinding[] = [];
+
+  const alertness = metrics?.alertnessScore;
+  if (alertness != null && Number.isFinite(alertness) && alertness < 25) {
+    out.push({
+      key: "low_alertness",
+      severity: alertness < 15 ? "critical" : "warning",
+      label: "Alertness",
+      reading: `${Math.round(alertness)}%`,
+      note: "below CareSpeak's 25% alertness floor",
+    });
+  }
+
+  const blink = metrics?.blinkRate;
+  if (blink != null && Number.isFinite(blink) && blink < 5) {
+    out.push({
+      key: "low_blink",
+      severity: blink < 2 ? "warning" : "watch",
+      label: "Blink rate",
+      reading: `${blink.toFixed(1)}/min`,
+      note: "below the 5/min watch level",
+    });
+  }
+
+  const closureMs = metrics?.eyeClosureDuration;
+  if (closureMs != null && Number.isFinite(closureMs) && closureMs > 3000) {
+    out.push({
+      key: "eye_closure",
+      severity: closureMs > 10_000 ? "critical" : "warning",
+      label: "Eye closure",
+      reading: `${(closureMs / 1000).toFixed(1)}s`,
+      note: closureMs > 10_000 ? "over 10 seconds" : "over 3 seconds",
+    });
+  }
+
+  const movement = metrics?.movementActivity;
+  if (movement != null && Number.isFinite(movement) && movement < 0.05) {
+    out.push({
+      key: "low_movement",
+      severity: "watch",
+      label: "Movement",
+      reading: movement.toFixed(2),
+      note: "very little movement detected",
+    });
+  }
+
+  if (vitals?.sosActive) {
+    out.push({
+      key: "sos",
+      severity: "critical",
+      label: "Wearable SOS",
+      reading: "active",
+      note: "the patient pressed SOS",
+    });
+  }
+  const spo2 = vitals?.spo2;
+  if (spo2 != null && Number.isFinite(spo2) && spo2 < 94) {
+    out.push({
+      key: "spo2",
+      severity: spo2 < 90 ? "critical" : "warning",
+      label: "SpO₂",
+      reading: `${Math.round(spo2)}%`,
+      note: spo2 < 90 ? "below 90%" : "below 94%",
+    });
+  }
+  const hr = vitals?.heartRate;
+  if (hr != null && Number.isFinite(hr) && (hr > 130 || hr < 45)) {
+    out.push({
+      key: "heart_rate",
+      severity: hr > 150 || hr < 40 ? "critical" : "warning",
+      label: "Heart rate",
+      reading: `${Math.round(hr)} bpm`,
+      note: hr > 130 ? "above 130 bpm" : "below 45 bpm",
+    });
+  }
+  const temp = vitals?.temperature;
+  if (temp != null && Number.isFinite(temp) && temp >= 38) {
+    out.push({
+      key: "temperature",
+      severity: temp >= 39 ? "critical" : "warning",
+      label: "Temperature",
+      reading: `${temp.toFixed(1)} °C`,
+      note: "at or above 38 °C",
+    });
+  }
+
+  return out.sort((a, b) => RANK[b.severity] - RANK[a.severity]);
+}
+
+/** Coarse bucket so tiny sensor jitter still hits the answer cache. */
+export function metricsBucket(m: PatientMetrics | null | undefined): string {
+  if (!m) return "none";
+  const r = (n: number | undefined, step: number) =>
+    n == null || !Number.isFinite(n) ? "-" : String(Math.round(n / step) * step);
+  return [
+    r(m.alertnessScore, 5),
+    r(m.blinkRate, 2),
+    r((m.eyeClosureDuration ?? 0) / 1000, 2),
+    r(m.movementActivity, 0.05),
+  ].join("/");
+}
+
+// ---------------------------------------------------------------------------
+// cache
+// ---------------------------------------------------------------------------
+
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+interface CachedAnswer {
+  text: string;
+  model: string;
+  at: string;
+}
+
+function cacheKey(parts: Array<string | number | null | undefined>): string {
+  return createHash("sha256").update(parts.map((p) => String(p ?? "")).join("\u0000")).digest("hex").slice(0, 40);
+}
+
+async function cacheGet(key: string): Promise<CachedAnswer | null> {
+  try {
+    const d = await getDriver();
+    const hit = (await d.getDoc(K.aiCache(key))) as CachedAnswer | null;
+    if (!hit) return null;
+    if (Date.now() - Date.parse(hit.at) > CACHE_TTL_MS) return null;
+    return hit;
+  } catch {
+    return null;
+  }
+}
+
+async function cachePut(key: string, text: string, model: string): Promise<void> {
+  try {
+    const d = await getDriver();
+    const value: CachedAnswer = { text, model, at: new Date().toISOString() };
+    await d.setDoc(K.aiCache(key), value);
+    await d.appendList(K.aiCacheIndex, key, 500);
+  } catch {
+    // Cache is an optimisation; never fail a request over it.
+  }
+}
+
+// ---------------------------------------------------------------------------
+// prompts
+// ---------------------------------------------------------------------------
+
+const ANSWER_SYSTEM = `You are CareSpeak's nurse-portal assistant, speaking to a registered nurse who is monitoring a patient remotely.
+Rules you must follow:
+- Use ONLY the PATIENT, INSERTED RECORDS and LIVE SIGNALS sections below. Never invent a value, medication, diagnosis, allergy or history.
+- If the answer is not in the supplied material, say plainly that it is not in the record and name what to check in person.
+- You may report readings and whether they are outside the stated thresholds. Do not diagnose or prescribe.
+- Prefer short, spoken answers: 2-4 sentences (about 70 words) unless the nurse asks for detail.
+- If a reading is critical, say what to check first.
+- Never claim to be a clinician or to have examined the patient.`;
+
+const ALERT_SYSTEM = `You write ONE spoken sentence for a nurse's phone, based only on the LIVE SIGNALS and patient record supplied.
+Rules:
+- Name the patient, state the LIVE SIGNAL readings that crossed their thresholds, and what to check first.
+- Use the LIVE SIGNALS readings. Do not quote older observations unless a live reading is missing.
+- Never invent a value, diagnosis or medication change.
+- Maximum 45 words. Sound calm and direct. Say "Alert" at most once.`;
+
+interface PatientFacts {
+  recordText: string;
+  omitted: number;
+}
+
+function structured(patient: ClinicalPatient): string {
+  const conditions = patient.conditions.filter((c) => c.status === "active").map((c) => c.name);
+  const meds = patient.medications
+    .filter((m) => m.status === "active")
+    .map((m) => `${m.name}${m.dose ? ` ${m.dose}` : ""}${m.frequency ? ` ${m.frequency}` : ""}`);
+  const allergies = patient.allergies.map((a) => `${a.substance}${a.reaction ? ` (${a.reaction})` : ""}`);
+  const obs = patient.observations.slice(0, 6).map((o) => `${o.label} ${o.value}${o.unit ? ` ${o.unit}` : ""} (${o.at.slice(0, 10)})`);
+  return [
+    `Name: ${patient.displayName}${patient.age != null ? `, ${patient.age}` : ""}${patient.sex ? ` ${patient.sex}` : ""}`,
+    patient.room ? `Location: ${patient.room}` : "",
+    patient.primaryConcern ? `Primary concern: ${patient.primaryConcern}` : "",
+    conditions.length ? `Active conditions: ${conditions.join(", ")}` : "",
+    meds.length ? `Medications: ${meds.join("; ")}` : "",
+    allergies.length ? `Allergies: ${allergies.join("; ")}` : "",
+    patient.carePlan ? `Care plan: ${patient.carePlan}` : "",
+    obs.length ? `Recent observations: ${obs.join("; ")}` : "",
+    patient.synthetic ? "Note: this is synthetic demo data, not a real patient." : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function signalBlock(findings: SignalFinding[], metrics: PatientMetrics | null | undefined): string {
+  const lines: string[] = [];
+  lines.push(`Alertness: ${metrics?.alertnessScore != null ? `${Math.round(metrics.alertnessScore)}%` : "no reading"}`);
+  lines.push(`Blink rate: ${metrics?.blinkRate != null ? `${metrics.blinkRate.toFixed(1)}/min` : "no reading"}`);
+  lines.push(
+    `Eye closure: ${metrics?.eyeClosureDuration != null ? `${(metrics.eyeClosureDuration / 1000).toFixed(1)}s` : "no reading"}`
+  );
+  lines.push(
+    `Movement: ${metrics?.movementActivity != null ? metrics.movementActivity.toFixed(2) : "no reading"}`
+  );
+  if (findings.length) {
+    lines.push(`Thresholds crossed: ${findings.map((f) => `${f.label} ${f.reading} (${f.note})`).join("; ")}`);
+  } else {
+    lines.push("Thresholds crossed: none");
+  }
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// context
+// ---------------------------------------------------------------------------
+
+export interface PortalContext {
+  sessionId: string;
+  link: SessionPatientLink | null;
+  patientId: string | null;
+  patient: ClinicalPatient | null;
+  records: Array<Pick<PatientRecord, "id" | "title" | "source" | "chars" | "createdAt">>;
+  recordChars: number;
+  metrics: PatientMetrics | null;
+  vitals: DeviceVitals | null;
+  findings: SignalFinding[];
+  worst: Severity;
+  engine: { gemini: boolean; model: string };
+  patients: Array<{ id: string; displayName: string; room?: string }>;
+  suggestedQuestions: string[];
+}
+
+function suggestionsFor(patient: ClinicalPatient | null, findings: SignalFinding[]): string[] {
+  const name = patient?.displayName.split(" ")[0] ?? "the patient";
+  const out: string[] = [];
+  if (findings.length) out.push("Is this urgent? What should I check first?");
+  out.push(`What is ${name}'s history?`);
+  out.push(`What medications is ${name} on?`);
+  out.push("Summarise the inserted records");
+  out.push("What changed since the last observation?");
+  return out.slice(0, 5);
+}
+
+export async function buildPortalContext(sessionId: string): Promise<PortalContext> {
+  const store = await getSessionStore();
+  const [link, metricsMap, vitalsMap, patients] = await Promise.all([
+    getSessionLink(sessionId).catch(() => null),
+    store.getMetrics(sessionId).catch(() => ({})),
+    store.getVitals(sessionId).catch(() => ({})),
+    listPatients().catch(() => [] as ClinicalPatient[]),
+  ]);
+
+  const metrics = Object.values(metricsMap)[0] ?? null;
+  const vitals = Object.values(vitalsMap)[0] ?? null;
+  const findings = analyzeSignals(metrics, vitals);
+  const patient = link ? await getPatient(link.patientId) : null;
+  const records = link ? await listRecords(link.patientId) : [];
+
+  return {
+    sessionId,
+    link,
+    patientId: link?.patientId ?? null,
+    patient,
+    records: records.map((r) => ({
+      id: r.id,
+      title: r.title,
+      source: r.source,
+      chars: r.chars,
+      createdAt: r.createdAt,
+    })),
+    recordChars: records.reduce((n, r) => n + r.chars, 0),
+    metrics,
+    vitals,
+    findings,
+    worst: worstSeverity(findings),
+    engine: { gemini: geminiConfigured(), model: geminiModelLabel() },
+    patients: patients.map((p) => ({ id: p.id, displayName: p.displayName, room: p.room })),
+    suggestedQuestions: suggestionsFor(patient, findings),
+  };
+}
+
+export async function linkPortalSession(
+  sessionId: string,
+  patientId: string,
+  linkedBy?: string
+): Promise<SessionPatientLink | null> {
+  const patient = await getPatient(patientId);
+  if (!patient) return null;
+  return linkSessionToPatient(sessionId, patientId, linkedBy);
+}
+
+// ---------------------------------------------------------------------------
+// answering
+// ---------------------------------------------------------------------------
+
+export type Engine = "gemini" | "rules";
+
+export interface PortalAnswer {
+  answer: string;
+  engine: Engine;
+  model: string;
+  cached: boolean;
+  intent?: string;
+}
+
+function assistantContextFor(patient: ClinicalPatient): AssistantContext {
+  const ctx: PatientContext = {
+    patient,
+    lastSession: null,
+    lastTranscript: [],
+    lastReport: null,
+    openTasks: [],
+    messages: [],
+  };
+  return { patients: [ctx], focused: ctx };
+}
+
+/** Structured intents the deterministic engine answers exactly and for free.
+ *
+ *  Note: `overview` is deliberately NOT here. `answerQuestion` returns
+ *  `overview` as its catch-all for any question it does not recognise, so
+ *  treating it as a structured intent made every free-form question bypass
+ *  Gemini. Overview/history questions instead go to Gemini (which also sees the
+ *  inserted free-text records), with the deterministic overview as the fallback.
+ */
+const STRUCTURED_INTENTS = new Set([
+  "medications",
+  "allergies",
+  "observations",
+  "conditions",
+  "care_plan",
+]);
+
+function rulesAnswer(question: string, patient: ClinicalPatient): { text: string; intent: string } | null {
+  const result = answerQuestion(question, assistantContextFor(patient));
+  if (!STRUCTURED_INTENTS.has(result.intent)) return null;
+  return { text: result.answer, intent: result.intent };
+}
+
+/** Very small keyword search over the inserted free-text records. */
+function searchRecords(question: string, records: PatientRecord[]): PatientRecord[] {
+  const stop = new Set(
+    "the a an and or of to in on for with what which who when where how is are was were do does did has have had patient record records show tell about please any".split(
+      " "
+    )
+  );
+  const terms = question
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !stop.has(w));
+  if (!terms.length) return [];
+  return records.filter((r) => {
+    const hay = `${r.title} ${r.source ?? ""} ${r.text}`.toLowerCase();
+    return terms.some((t) => hay.includes(t));
+  });
+}
+
+export async function askPortal(sessionId: string, rawQuestion: string): Promise<PortalAnswer & { patientId: string | null }> {
+  const question = rawQuestion.trim().slice(0, 1000);
+  const ctx = await buildPortalContext(sessionId);
+
+  if (!ctx.patient) {
+    return {
+      answer:
+        "No patient is linked to this session yet. Open Patient records, or pick the patient below, so I know whose history to use.",
+      engine: "rules",
+      model: "rules",
+      cached: false,
+      patientId: null,
+    };
+  }
+
+  if (!question) {
+    return {
+      answer: ctx.findings.length
+        ? `Watching ${ctx.patient.displayName}. ${ctx.findings.map((f) => `${f.label} ${f.reading}`).join(", ")}.`
+        : `Watching ${ctx.patient.displayName}. All monitored readings are inside their thresholds right now.`,
+      engine: "rules",
+      model: "rules",
+      cached: false,
+      patientId: ctx.patient.id,
+    };
+  }
+
+  const patient = ctx.patient;
+  const records = await listRecords(patient.id);
+  const key = cacheKey([
+    "answer",
+    patient.id,
+    question.toLowerCase(),
+    records.map((r) => `${r.id}:${r.chars}`).join(","),
+    metricsBucket(ctx.metrics),
+    ctx.findings.map((f) => f.key).join(","),
+  ]);
+
+  const cached = await cacheGet(key);
+  if (cached) {
+    return { answer: cached.text, engine: "gemini", model: cached.model, cached: true, patientId: patient.id };
+  }
+
+  // 1. Exact structured answers first — free and never wrong.
+  const exact = rulesAnswer(question, patient);
+  if (exact) {
+    await cachePut(key, exact.text, "rules");
+    return { answer: exact.text, engine: "rules", model: "rules", cached: false, intent: exact.intent, patientId: patient.id };
+  }
+
+  // 2. Gemini for everything else, grounded on the same material.
+  if (geminiConfigured()) {
+    const recordBlock = await buildRecordContext(patient.id);
+    const matched = searchRecords(question, records);
+    const matchedText = matched
+      .slice(0, 3)
+      .map((r) => `### ${r.title}${r.source ? ` (${r.source})` : ""}\n${r.text.slice(0, 4000)}`)
+      .join("\n\n");
+
+    const prompt = [
+      `PATIENT\n${structured(patient)}`,
+      `INSERTED RECORDS${recordBlock.omitted ? ` (${recordBlock.omitted} older record(s) omitted for length)` : ""}\n${
+        recordBlock.text || "none inserted yet"
+      }`,
+      matchedText ? `MOST RELEVANT RECORD EXCERPTS\n${matchedText}` : "",
+      `LIVE SIGNALS\n${signalBlock(ctx.findings, ctx.metrics)}`,
+      `QUESTION\n${question}`,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
+    const result = await geminiGenerate({ system: ANSWER_SYSTEM, prompt, maxTokens: 400, temperature: 0.2 });
+    if (result) {
+      await cachePut(key, result.text, result.model);
+      return { answer: result.text, engine: "gemini", model: result.model, cached: false, patientId: patient.id };
+    }
+  }
+
+  // 3. Honest local fallback: report what the record and signals actually say.
+  const parts: string[] = [];
+  if (ctx.findings.length) {
+    parts.push(
+      `Live readings outside thresholds: ${ctx.findings
+        .map((f) => `${f.label} ${f.reading} (${f.note})`)
+        .join("; ")}.`
+    );
+  } else {
+    parts.push("All monitored readings are inside their thresholds right now.");
+  }
+  const hits = searchRecords(question, records);
+  if (hits.length) {
+    parts.push(
+      `The inserted records that mention this are: ${hits
+        .slice(0, 2)
+        .map((r) => `"${r.title}" (${r.createdAt.slice(0, 10)})`)
+        .join(" and ")}.`
+    );
+  } else {
+    parts.push("I could not match that to an inserted document.");
+    // Give the deterministic read of the structured record rather than a
+    // content-free dead end. This is the same grounded summary the assistant
+    // uses elsewhere — no model, no invented values.
+    const overview = answerQuestion(question, assistantContextFor(patient));
+    if (overview.intent === "overview" && overview.answer) parts.push(overview.answer);
+  }
+  parts.push("Check the chart in person, or add the missing document on the Patient records page.");
+  const answer = parts.join(" ");
+  await cachePut(key, answer, "rules");
+  return { answer, engine: "rules", model: "rules", cached: false, patientId: patient.id };
+}
+
+// ---------------------------------------------------------------------------
+// spoken alerts + briefing
+// ---------------------------------------------------------------------------
+
+export interface PortalAlert {
+  line: string;
+  severity: Severity;
+  engine: Engine;
+  model: string;
+  cached: boolean;
+  findings: SignalFinding[];
+}
+
+/** Deterministic one-liner used when Gemini is unavailable. */
+export function rulesAlertLine(patient: ClinicalPatient | null, findings: SignalFinding[]): string {
+  if (!findings.length) return "";
+  const who = patient ? patient.displayName : "The patient";
+  const worst = findings[0];
+  const rest = findings.slice(1, 3).map((f) => `${f.label.toLowerCase()} ${f.reading}`);
+  const tail = rest.length ? `, with ${rest.join(" and ")}` : "";
+  return `${who}: ${worst.label.toLowerCase()} is ${worst.reading}, ${worst.note}${tail}. Please assess ${patient ? patient.displayName.split(" ")[0] : "them"} now.`;
+}
+
+/**
+ * Returns a spoken alert for the current signal state, or an empty line when
+ * every reading is inside its threshold. Cached per signal state.
+ */
+export async function alertPortal(
+  sessionId: string,
+  opts: { force?: boolean } = {}
+): Promise<PortalAlert> {
+  const ctx = await buildPortalContext(sessionId);
+  if (!ctx.findings.length) {
+    return { line: "", severity: "ok", engine: "rules", model: "rules", cached: false, findings: [] };
+  }
+
+  const key = cacheKey([
+    "alert",
+    ctx.patientId,
+    ctx.findings.map((f) => `${f.key}:${f.reading}`).join("|"),
+    metricsBucket(ctx.metrics),
+  ]);
+
+  if (!opts.force) {
+    const hit = await cacheGet(key);
+    if (hit) {
+      return { line: hit.text, severity: ctx.worst, engine: "gemini", model: hit.model, cached: true, findings: ctx.findings };
+    }
+  }
+
+  if (geminiConfigured() && ctx.patient) {
+    const prompt = [
+      `PATIENT\n${structured(ctx.patient)}`,
+      `LIVE SIGNALS\n${signalBlock(ctx.findings, ctx.metrics)}`,
+      `TASK\nWrite one spoken sentence for the nurse about ${ctx.patient.displayName}.`,
+    ].join("\n\n");
+    const result = await geminiGenerate({ system: ALERT_SYSTEM, prompt, maxTokens: 140, temperature: 0.2 });
+    if (result) {
+      await cachePut(key, result.text, result.model);
+      return { line: result.text, severity: ctx.worst, engine: "gemini", model: result.model, cached: false, findings: ctx.findings };
+    }
+  }
+
+  const line = rulesAlertLine(ctx.patient, ctx.findings);
+  await cachePut(key, line, "rules");
+  return { line, severity: ctx.worst, engine: "rules", model: "rules", cached: false, findings: ctx.findings };
+}
+
+/** The line spoken when the portal opens, before the nurse asks anything. */
+export async function portalBriefing(sessionId: string): Promise<{ line: string; engine: Engine; model: string }> {
+  const ctx = await buildPortalContext(sessionId);
+  if (!ctx.patient) {
+    return {
+      line: "Connected. Link this session to a patient to hear their history and live readings.",
+      engine: "rules",
+      model: "rules",
+    };
+  }
+
+  const base = ctx.findings.length
+    ? rulesAlertLine(ctx.patient, ctx.findings)
+    : `Monitoring ${ctx.patient.displayName}. ${ctx.patient.primaryConcern ?? "No primary concern recorded."} All monitored readings are inside their thresholds.`;
+
+  if (!geminiConfigured()) return { line: base, engine: "rules", model: "rules" };
+
+  const key = cacheKey(["brief", ctx.patientId, metricsBucket(ctx.metrics), ctx.findings.map((f) => f.key).join(",")]);
+  const hit = await cacheGet(key);
+  if (hit) return { line: hit.text, engine: "gemini", model: hit.model };
+
+  const prompt = [
+    `PATIENT\n${structured(ctx.patient)}`,
+    `LIVE SIGNALS\n${signalBlock(ctx.findings, ctx.metrics)}`,
+    `TASK\nGive the nurse a two-sentence orientation: who this is, their main concern, and whether anything needs attention right now.`,
+  ].join("\n\n");
+  const result = await geminiGenerate({ system: ANSWER_SYSTEM, prompt, maxTokens: 200, temperature: 0.2 });
+  if (result) {
+    await cachePut(key, result.text, result.model);
+    return { line: result.text, engine: "gemini", model: result.model };
+  }
+  return { line: base, engine: "rules", model: "rules" };
+}

@@ -78,6 +78,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <div className="space-y-3">
                   {[
                     { href: "/care", label: "Web Voice Call (Demo)" },
+                    { href: "/care/records", label: "Patient Records" },
                     { href: "/voicelink", label: "VoiceLink" },
                     { href: "/dashboard", label: "Dashboard" },
                     { href: "/logs", label: "Gesture Logs" },

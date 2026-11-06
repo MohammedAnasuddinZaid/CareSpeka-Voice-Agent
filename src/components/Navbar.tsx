@@ -22,6 +22,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/hand-mode", label: "Hand Mode", i18nKey: "handMode", icon: Hand, description: "Gesture to speech" },
       { href: "/eye-mode", label: "Eye Mode", i18nKey: "eyeMode", icon: Eye, description: "Eye-tracking input" },
       { href: "/nurse-view", label: "Nurse Dashboard", i18nKey: "nurse", icon: Activity },
+      { href: "/care/records", label: "Patient Records", icon: FileText, description: "History for the AI assistant" },
       { href: "/ward", label: "Ward", i18nKey: "ward", icon: BedDouble },
       { href: "/cctv", label: "CCTV", i18nKey: "cctv", icon: Camera },
     ],

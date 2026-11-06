@@ -19,6 +19,8 @@ import type {
   CareTranscriptEntry,
   ClinicalPatient,
   PatientMessage,
+  PatientRecord,
+  SessionPatientLink,
 } from "./types";
 import { ensureDemoSeed } from "./seedDemo";
 
@@ -456,4 +458,123 @@ export async function getLogin(hash: string): Promise<LoginRecord | null> {
 export async function delLogin(hash: string): Promise<void> {
   const d = await getDriver();
   await d.del(K.login(hash));
+}
+
+// ---------------------------------------------------------------------------
+// inserted patient records (context for the care assistant)
+// ---------------------------------------------------------------------------
+
+/** Hard cap per record so one paste cannot bloat the context or the store. */
+export const RECORD_MAX_CHARS = 40_000;
+
+export async function addRecord(input: {
+  patientId: string;
+  title: string;
+  source?: string;
+  text: string;
+  createdBy?: string;
+  synthetic?: boolean;
+}): Promise<PatientRecord> {
+  const text = input.text.trim().slice(0, RECORD_MAX_CHARS);
+  const record: PatientRecord = {
+    id: newId("rec"),
+    patientId: input.patientId,
+    title: input.title.trim().slice(0, 160) || "Untitled record",
+    source: input.source?.trim().slice(0, 80) || undefined,
+    text,
+    chars: text.length,
+    createdAt: isoNow(),
+    createdBy: input.createdBy,
+    synthetic: input.synthetic,
+  };
+  const d = await getDriver();
+  await d.setDoc(K.record(record.id), record);
+  await d.appendList(K.recordIndex, record.id, 1000);
+  return record;
+}
+
+/** Newest first. Missing documents (deleted) are skipped. */
+export async function listRecords(patientId?: string): Promise<PatientRecord[]> {
+  const d = await getDriver();
+  const ids = (await d.getList(K.recordIndex)) as string[];
+  const out: PatientRecord[] = [];
+  for (const id of ids) {
+    const rec = (await d.getDoc(K.record(id))) as PatientRecord | null;
+    if (!rec) continue;
+    if (patientId && rec.patientId !== patientId) continue;
+    out.push(rec);
+  }
+  return out.reverse();
+}
+
+export async function getRecord(id: string): Promise<PatientRecord | null> {
+  const d = await getDriver();
+  return ((await d.getDoc(K.record(id))) as PatientRecord | null) ?? null;
+}
+
+/**
+ * Records are append-only for auditability, so "delete" hides the document and
+ * leaves the index entry. `listRecords` already skips documents that are gone.
+ */
+export async function deleteRecord(id: string): Promise<boolean> {
+  const rec = await getRecord(id);
+  if (!rec) return false;
+  const d = await getDriver();
+  await d.del(K.record(id));
+  return true;
+}
+
+/**
+ * Concatenates the most recent records for a patient into one context block.
+ *
+ * Newest first, bounded by `maxChars` so a long history still fits a model
+ * prompt. Each block is labelled with its title, source and date so the
+ * assistant can attribute what it says.
+ */
+export async function buildRecordContext(
+  patientId: string,
+  maxChars = 24_000
+): Promise<{ text: string; used: PatientRecord[]; omitted: number }> {
+  const all = await listRecords(patientId);
+  const used: PatientRecord[] = [];
+  const parts: string[] = [];
+  let total = 0;
+  for (const rec of all) {
+    const header = `### ${rec.title}${rec.source ? ` (${rec.source})` : ""} — ${rec.createdAt.slice(0, 10)}`;
+    const block = `${header}\n${rec.text}`;
+    if (total + block.length > maxChars && parts.length > 0) break;
+    parts.push(block);
+    used.push(rec);
+    total += block.length + 2;
+  }
+  return {
+    text: parts.join("\n\n"),
+    used,
+    omitted: all.length - used.length,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// session -> patient link (set from the nurse portal after scanning the QR)
+// ---------------------------------------------------------------------------
+
+export async function linkSessionToPatient(
+  sessionId: string,
+  patientId: string,
+  linkedBy?: string
+): Promise<SessionPatientLink> {
+  const link: SessionPatientLink = {
+    sessionId,
+    patientId,
+    linkedAt: isoNow(),
+    linkedBy,
+  };
+  const d = await getDriver();
+  await d.setDoc(K.sessionLink(sessionId), link);
+  return link;
+}
+
+export async function getSessionLink(sessionId: string): Promise<SessionPatientLink | null> {
+  const d = await getDriver();
+  return ((await d.getDoc(K.sessionLink(sessionId))) as SessionPatientLink | null) ?? null;
 }
