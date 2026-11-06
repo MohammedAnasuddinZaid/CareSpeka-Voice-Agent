@@ -15,6 +15,7 @@
  */
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { getRedis } from "@/lib/redis";
 
 export type DriverName = "redis" | "file" | "memory";
 
@@ -196,8 +197,7 @@ export async function getDriver(): Promise<KVDriver> {
 
   if (redisConfigured) {
     try {
-      const mod = await import("@upstash/redis");
-      const redis = new mod.Redis({ url: url!, token: token! }) as unknown as RedisLike;
+      const redis = getRedis() as unknown as RedisLike;
       cached = new RedisDriver(redis);
       return cached;
     } catch {
