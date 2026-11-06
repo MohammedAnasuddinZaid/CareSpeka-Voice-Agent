@@ -8,6 +8,7 @@ import {
   normalizePhone,
   resetCooldownsForTests,
   twilioConfigured,
+  twilioFromNumber,
   twimlHangup,
   twimlPrompt,
   voiceSecret,
@@ -66,10 +67,14 @@ describe("phone normalisation", () => {
 
   it("reports configuration honestly", () => {
     expect(twilioConfigured()).toBe(false);
+    // The sender number has a built-in default so the deployment works even
+    // when only the SID/token are set in the environment.
+    expect(twilioFromNumber()).toBe("+919908786211");
     process.env.TWILIO_ACCOUNT_SID = "AC123";
     process.env.TWILIO_AUTH_TOKEN = "token";
     process.env.TWILIO_FROM_NUMBER = "12025550123";
     expect(twilioConfigured()).toBe(true);
+    expect(twilioFromNumber()).toBe("+12025550123");
   });
 });
 

@@ -41,8 +41,10 @@ export function normalizePhone(raw?: string | null): string | null {
 }
 
 /** The verified Twilio sender number. Required before any call can be placed. */
+const DEFAULT_FROM_NUMBER = "+919908786211";
+
 export function twilioFromNumber(): string | null {
-  return normalizePhone(process.env.TWILIO_FROM_NUMBER);
+  return normalizePhone(process.env.TWILIO_FROM_NUMBER) ?? normalizePhone(DEFAULT_FROM_NUMBER);
 }
 
 export function twilioConfigured(): boolean {
