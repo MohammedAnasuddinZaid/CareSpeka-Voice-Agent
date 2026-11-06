@@ -37,6 +37,7 @@ import {
   carePortalBrief,
   carePortalContext,
   carePortalLink,
+  carePortalUnlink,
   type PortalContext,
 } from "@/lib/careClient";
 import { speak, speechSynthesisAvailable, stopSpeaking } from "@/lib/care/browserAI";
@@ -109,6 +110,7 @@ export default function BrowserCall({
   // patient linking (so a sync session can be attached to a real patient)
   const [pickedPatient, setPickedPatient] = useState("");
   const [linking, setLinking] = useState(false);
+  const [unlinking, setUnlinking] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
   const [showAddPatient, setShowAddPatient] = useState(false);
   const [newPatientName, setNewPatientName] = useState("");
@@ -432,6 +434,21 @@ export default function BrowserCall({
     }
   }, [linking, pickedPatient, sessionId]);
 
+  const unlinkPatient = useCallback(async () => {
+    if (!sessionId || unlinking) return;
+    setUnlinking(true);
+    setLinkError(null);
+    try {
+      const res = await carePortalUnlink(sessionId, pairRef.current);
+      setContext(res.context);
+      setPickedPatient("");
+    } catch (err) {
+      setLinkError(err instanceof CareApiError ? err.message : "Could not unlink.");
+    } finally {
+      setUnlinking(false);
+    }
+  }, [sessionId, unlinking]);
+
   const addPatient = useCallback(
     async (e: FormEvent) => {
       e.preventDefault();
@@ -569,12 +586,12 @@ export default function BrowserCall({
                 {context.patient.room ? ` · ${context.patient.room}` : ""}
                 <button
                   type="button"
-                  onClick={() => void removePatient(context.patient!.id)}
-                  disabled={deletingId === context.patient!.id}
+                  onClick={() => void unlinkPatient()}
+                  disabled={unlinking}
                   className="ml-1 text-emerald-700 hover:text-red-600"
-                  title="Remove this patient"
+                  title="Unlink this patient (keep them in records)"
                 >
-                  {deletingId === context.patient!.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "×"}
+                  {unlinking ? <Loader2 className="h-3 w-3 animate-spin" /> : "×"}
                 </button>
               </span>
             ) : (

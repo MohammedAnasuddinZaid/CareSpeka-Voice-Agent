@@ -680,3 +680,8 @@ export async function getSessionLink(sessionId: string): Promise<SessionPatientL
   const d = await getDriver();
   return ((await d.getDoc(K.sessionLink(sessionId))) as SessionPatientLink | null) ?? null;
 }
+
+export async function unlinkSessionPatient(sessionId: string): Promise<void> {
+  const d = await getDriver();
+  await d.del(K.sessionLink(sessionId));
+}

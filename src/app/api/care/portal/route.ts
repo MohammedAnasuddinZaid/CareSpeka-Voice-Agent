@@ -6,6 +6,7 @@ import {
   executePortalAction,
   linkPortalSession,
   portalBriefing,
+  unlinkPortalSession,
 } from "@/lib/care/portalBrain";
 import { appendAudit, getPatient } from "@/lib/care/repo";
 import { fail, ok, readBody } from "@/lib/care/http";
@@ -107,6 +108,17 @@ export async function POST(req: NextRequest) {
       });
 
       return ok({ link, context: await buildPortalContext(session) });
+    }
+
+    case "unlink": {
+      await unlinkPortalSession(session);
+      await appendAudit({
+        actorRole: access.actor?.role ?? "nurse",
+        actorId: access.actor?.userId,
+        action: "care.session_unlinked",
+        sessionId: session,
+      });
+      return ok({ context: await buildPortalContext(session) });
     }
 
     default:

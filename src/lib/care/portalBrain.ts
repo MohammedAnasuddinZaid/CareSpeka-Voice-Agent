@@ -29,6 +29,7 @@ import {
   linkSessionToPatient,
   listPatients,
   listRecords,
+  unlinkSessionPatient,
 } from "./repo";
 import {
   answerQuestion,
@@ -398,6 +399,10 @@ export async function linkPortalSession(
   const patient = await getPatient(patientId);
   if (!patient) return null;
   return linkSessionToPatient(sessionId, patientId, linkedBy);
+}
+
+export async function unlinkPortalSession(sessionId: string): Promise<void> {
+  await unlinkSessionPatient(sessionId);
 }
 
 // ---------------------------------------------------------------------------

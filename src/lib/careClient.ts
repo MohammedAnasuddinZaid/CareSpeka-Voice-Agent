@@ -475,6 +475,13 @@ export async function carePortalLink(session: string, patientId: string, pair?: 
   });
 }
 
+export async function carePortalUnlink(session: string, pair?: string | null) {
+  return request<{ context: PortalContext }>("/api/care/portal", {
+    method: "POST",
+    body: JSON.stringify({ session, pair: pair ?? undefined, action: "unlink" }),
+  });
+}
+
 export async function carePortalAsk(session: string, question: string, pair?: string | null) {
   return request<{ result: PortalAnswer }>("/api/care/portal", {
     method: "POST",

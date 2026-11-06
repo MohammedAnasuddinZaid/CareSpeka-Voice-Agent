@@ -45,6 +45,7 @@ import {
   carePortalCall,
   carePortalContext,
   carePortalLink,
+  carePortalUnlink,
   type PortalAlert,
   type PortalContext,
   type PortalSeverity,
@@ -522,6 +523,27 @@ const removePatient = async (id: string) => {
           >
             <Monitor className="h-3 w-3" /> Browser call
           </button>
+          {patient ? (
+            <button
+              onClick={async () => {
+                if (!sessionId) return;
+                try {
+                  const res = await carePortalUnlink(sessionId, pairRef.current);
+                  setContext(res.context);
+                  setTurns([]);
+                  setAlerts([]);
+                  lastSigRef.current = "";
+                  briefedRef.current = null;
+                } catch (err) {
+                  setContextError(err instanceof CareApiError ? err.message : "Could not unlink.");
+                }
+              }}
+              className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-semibold text-red-700 transition hover:bg-red-100"
+              title="Unlink this patient (keep them in records)"
+            >
+              Unlink
+            </button>
+          ) : null}
           <button
             onClick={() => setShowSettings((v) => !v)}
             className="inline-flex items-center gap-1 rounded-full border border-[#ececec] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#6e6e6e] hover:text-[#1f1f1f]"
