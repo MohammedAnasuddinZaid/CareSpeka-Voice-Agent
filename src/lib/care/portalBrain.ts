@@ -119,6 +119,21 @@ export function analyzeSignals(
     });
   }
 
+  // device went quiet / patient unresponsive
+  const lastSeen = metrics?.lastSeen;
+  if (lastSeen) {
+    const ageMs = Date.now() - new Date(lastSeen).getTime();
+    if (Number.isFinite(ageMs) && ageMs > 60_000) {
+      out.push({
+        key: "signal_stale",
+        severity: ageMs > 5 * 60_000 ? "critical" : "warning",
+        label: "Signal",
+        reading: `${Math.round(ageMs / 1000)}s ago`,
+        note: "no fresh readings from the patient device",
+      });
+    }
+  }
+
   if (vitals?.sosActive) {
     out.push({
       key: "sos",
@@ -332,20 +347,17 @@ export async function buildPortalContext(sessionId: string): Promise<PortalConte
       linkedBy: session.nurseName,
     };
   }
-  // For patient-device (sync) sessions there is no care session row, so the
-  // patient has to be chosen. When there is exactly one real patient in the
-  // store we link automatically, so a single-patient setup works out of the box.
+  // auto-link only to real (non-synthetic) patients; demo patients stay optional
   if (!link && !session) {
     const realPatients = patients.filter((p) => !p.synthetic);
-    const candidates = realPatients.length ? realPatients : patients;
-    if (candidates.length === 1) {
+    if (realPatients.length === 1) {
       link = {
         sessionId,
-        patientId: candidates[0].id,
+        patientId: realPatients[0].id,
         linkedAt: new Date().toISOString(),
         linkedBy: "auto",
       };
-      void linkSessionToPatient(sessionId, candidates[0].id, "auto").catch(() => undefined);
+      void linkSessionToPatient(sessionId, realPatients[0].id, "auto").catch(() => undefined);
     }
   }
 
@@ -534,9 +546,37 @@ export async function askPortal(
   const ctx = await buildPortalContext(sessionId);
 
   if (!ctx.patient) {
+    const liveParts: string[] = [];
+    if (ctx.metrics?.alertnessScore != null) liveParts.push(`alertness ${Math.round(ctx.metrics.alertnessScore)}%`);
+    if (ctx.metrics?.blinkRate != null) liveParts.push(`blink rate ${ctx.metrics.blinkRate.toFixed(1)} per minute`);
+    if (ctx.metrics?.eyeClosureDuration != null) liveParts.push(`eye closure ${(ctx.metrics.eyeClosureDuration / 1000).toFixed(1)} seconds`);
+    if (ctx.metrics?.movementActivity != null) liveParts.push(`movement ${ctx.metrics.movementActivity.toFixed(2)}`);
+    const live = liveParts.length ? `Live readings: ${liveParts.join(", ")}.` : "No live readings yet.";
+    if (!question) {
+      return {
+        answer: ctx.findings.length
+          ? `${live} ${ctx.findings.map((f) => `${f.label} ${f.reading}`).join(", ")}.`
+          : `${live} All monitored readings are inside their thresholds.`,
+        engine: "rules",
+        model: "rules",
+        cached: false,
+        patientId: null,
+      };
+    }
+    const q = question.toLowerCase();
+    if (/blink|alertness|closure|movement|reading|vital|status|how is|how are/.test(q)) {
+      return {
+        answer: ctx.findings.length
+          ? `${live} ${ctx.findings.map((f) => `${f.label} ${f.reading}`).join(", ")}.`
+          : `${live} All monitored readings are inside their thresholds right now.`,
+        engine: "rules",
+        model: "rules",
+        cached: false,
+        patientId: null,
+      };
+    }
     return {
-      answer:
-        "No patient is linked to this session yet. Open Patient records, or pick the patient below, so I know whose history to use.",
+      answer: `No patient is linked to this session yet, so I can only report the live readings: ${live} Link a patient in the nurse portal (or on this page) to use their history and records.`,
       engine: "rules",
       model: "rules",
       cached: false,
@@ -739,8 +779,21 @@ export async function alertPortal(
 export async function portalBriefing(sessionId: string): Promise<{ line: string; engine: Engine; model: string }> {
   const ctx = await buildPortalContext(sessionId);
   if (!ctx.patient) {
+    const liveParts: string[] = [];
+    if (ctx.metrics?.alertnessScore != null) liveParts.push(`alertness ${Math.round(ctx.metrics.alertnessScore)}%`);
+    if (ctx.metrics?.blinkRate != null) liveParts.push(`blink rate ${ctx.metrics.blinkRate.toFixed(1)} per minute`);
+    if (ctx.metrics?.eyeClosureDuration != null) liveParts.push(`eye closure ${(ctx.metrics.eyeClosureDuration / 1000).toFixed(1)} seconds`);
+    if (ctx.metrics?.movementActivity != null) liveParts.push(`movement ${ctx.metrics.movementActivity.toFixed(2)}`);
+    const live = liveParts.length ? `Live readings right now: ${liveParts.join(", ")}.` : "No live readings yet.";
+    if (ctx.findings.length) {
+      return {
+        line: `${live} ${ctx.findings.map((f) => `${f.label} ${f.reading}`).join(", ")}.`,
+        engine: "rules",
+        model: "rules",
+      };
+    }
     return {
-      line: "Connected. Link this session to a patient to hear their history and live readings.",
+      line: `${live} All monitored readings are inside their thresholds. Link a patient in the portal to add their history.`,
       engine: "rules",
       model: "rules",
     };

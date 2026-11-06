@@ -354,7 +354,7 @@ export default function BrowserCall({
             .catch(() => "");
         })()
       : Promise.resolve(
-          "Hi, this is the CareSpeak assistant. No patient is linked to this session yet, so I can only answer general questions. Link a patient in the nurse portal to hear their briefing."
+          "Hi, this is the CareSpeak assistant. No patient is linked to this session yet, but I can still report the live readings. Link a patient in the nurse portal to add their history."
         );
 
     void opening
