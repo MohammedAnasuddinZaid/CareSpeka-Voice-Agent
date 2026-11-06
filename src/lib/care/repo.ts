@@ -139,7 +139,7 @@ export async function deletePatient(id: string): Promise<boolean> {
     }
     if (rec) keptRecordIds.push(rid);
   }
-  await d.setDoc(K.recordIndex, keptRecordIds);
+  await d.setList(K.recordIndex, keptRecordIds);
 
   await d.del(K.patient(id));
   const index = ((await d.getDoc(K.patientIndex)) as string[] | null) ?? [];
@@ -587,7 +587,18 @@ export async function addRecord(input: {
 /** Newest first. Missing documents (deleted) are skipped. */
 export async function listRecords(patientId?: string): Promise<PatientRecord[]> {
   const d = await getDriver();
-  const ids = (await d.getList(K.recordIndex)) as string[];
+  let ids: string[] = [];
+  try {
+    ids = (await d.getList(K.recordIndex)) as string[];
+  } catch {
+    // The index may have been stored as a JSON doc (e.g. by an older build
+    // of deletePatient). Heal it by converting to a proper list.
+    const raw = await d.getDoc(K.recordIndex);
+    if (Array.isArray(raw)) {
+      ids = raw as string[];
+      await d.setList(K.recordIndex, ids).catch(() => undefined);
+    }
+  }
   const out: PatientRecord[] = [];
   for (const id of ids) {
     const rec = (await d.getDoc(K.record(id))) as PatientRecord | null;

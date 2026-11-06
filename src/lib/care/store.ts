@@ -26,6 +26,7 @@ export interface KVDriver {
   setDoc(key: string, value: unknown): Promise<void>;
   appendList(key: string, value: unknown, cap?: number): Promise<number>;
   getList(key: string, from?: number): Promise<unknown[]>;
+  setList(key: string, values: unknown[]): Promise<void>;
   del(key: string): Promise<void>;
 }
 
@@ -54,6 +55,9 @@ class MemoryDriver implements KVDriver {
   }
   async getList(key: string, from = 0) {
     return (this.lists.get(key) ?? []).slice(from);
+  }
+  async setList(key: string, values: unknown[]) {
+    this.lists.set(key, [...values]);
   }
   async del(key: string) {
     this.docs.delete(key);
@@ -134,6 +138,13 @@ class FileDriver implements KVDriver {
   async getList(key: string, from = 0) {
     return this.run(async () => ((await this.read()).lists[key] ?? []).slice(from));
   }
+  async setList(key: string, values: unknown[]) {
+    await this.run(async () => {
+      const data = await this.read();
+      data.lists[key] = [...values];
+      await this.write(data);
+    });
+  }
   async del(key: string) {
     await this.run(async () => {
       const data = await this.read();
@@ -175,6 +186,10 @@ class RedisDriver implements KVDriver {
   }
   async getList(key: string, from = 0) {
     return this.redis.lrange(key, from, -1);
+  }
+  async setList(key: string, values: unknown[]) {
+    await this.redis.del(key);
+    if (values.length) await this.redis.rpush(key, ...values);
   }
   async del(key: string) {
     await this.redis.del(key);
