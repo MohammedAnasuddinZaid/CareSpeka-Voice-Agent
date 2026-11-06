@@ -264,3 +264,18 @@ export async function checkCooldown(
   memoryCooldowns.set(key, now);
   return { allowed: true, retryAfterMs: 0 };
 }
+
+/**
+ * Releases a cooldown that was reserved for a dial which never connected.
+ * Without this, a failed Twilio request (wrong sender, unverified number, a
+ * transient outage) still locks the button for the whole window.
+ */
+export async function clearCooldown(key: string): Promise<void> {
+  memoryCooldowns.delete(key);
+  if (!isRedisConfigured()) return;
+  try {
+    await getRedis().del(`care:callcooldown:${key}`);
+  } catch {
+    // Redis unavailable — the in-process entry is already gone.
+  }
+}

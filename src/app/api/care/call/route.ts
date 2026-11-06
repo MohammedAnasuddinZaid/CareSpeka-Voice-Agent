@@ -5,6 +5,7 @@ import { authorizeSession } from "@/lib/care/sessionAccess";
 import {
   buildWebhookUrl,
   checkCooldown,
+  clearCooldown,
   emergencyNumbers,
   isPublicHttpsUrl,
   placeCall,
@@ -23,13 +24,13 @@ export const dynamic = "force-dynamic";
  * portal (cookie) and the patient laptop (pair token) can trigger it.
  *
  * Cooldowns protect the free Twilio balance: an emergency dial is limited to one
- * per 90s per session, a demo dial to one per 20s. No call is ever placed when
+ * per 90s per session, a demo dial to one per 8s. No call is ever placed when
  * Twilio is not configured, or when the webhook URL is not publicly reachable.
  */
 
 const SESSION_RE = /^[A-Z0-9_-]{3,32}$/i;
 const EMERGENCY_COOLDOWN_MS = 90_000;
-const DEMO_COOLDOWN_MS = 20_000;
+const DEMO_COOLDOWN_MS = 8_000;
 
 interface CallBody {
   session?: string;
@@ -114,6 +115,9 @@ export async function POST(req: NextRequest) {
   });
 
   if (!first) {
+    // The dial never landed (bad sender, unverified number, Twilio outage).
+    // Release the window so the nurse can correct it and retry immediately.
+    await clearCooldown(`${session}:${reason}`);
     return fail(attempts[0]?.error ?? "Twilio could not place the call.", 502, { attempts });
   }
 

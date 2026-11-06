@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   buildWebhookUrl,
   checkCooldown,
+  clearCooldown,
   emergencyNumbers,
   escapeXml,
   isPublicHttpsUrl,
@@ -134,6 +135,14 @@ describe("call cooldown", () => {
 
     resetCooldownsForTests();
     expect((await checkCooldown("SESS:demo", 20_000)).allowed).toBe(true);
+  });
+
+  it("releases the window so a failed dial can be retried immediately", async () => {
+    expect((await checkCooldown("SESS:failed", 8_000)).allowed).toBe(true);
+    expect((await checkCooldown("SESS:failed", 8_000)).allowed).toBe(false);
+
+    await clearCooldown("SESS:failed");
+    expect((await checkCooldown("SESS:failed", 8_000)).allowed).toBe(true);
   });
 });
 
