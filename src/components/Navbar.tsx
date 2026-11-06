@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, Menu, X, Hand, Eye, Activity, FileText, Info, AlertTriangle, Camera, ClipboardList, BedDouble, Phone, PhoneCall, LayoutDashboard } from "lucide-react";
+import { ChevronDown, Menu, X, Hand, Eye, Activity, FileText, Info, AlertTriangle, Camera, ClipboardList, BedDouble, LayoutDashboard } from "lucide-react";
 import { SUPPORTED_LANGUAGES, SupportedLanguage } from "@/types";
 import { voiceAlert } from "@/lib/tts";
 import { t, type UIKey } from "@/lib/i18n";
@@ -25,14 +25,6 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/care/records", label: "Patient Records", icon: FileText, description: "History for the AI assistant" },
       { href: "/ward", label: "Ward", i18nKey: "ward", icon: BedDouble },
       { href: "/cctv", label: "CCTV", i18nKey: "cctv", icon: Camera },
-    ],
-  },
-  {
-    label: "Voice",
-    icon: Phone,
-    items: [
-      { href: "/care", label: "Web Voice Call", icon: PhoneCall, description: "Browser-to-browser demo" },
-      { href: "/voicelink", label: "VoiceLink", icon: Phone, description: "Telephony calls" },
     ],
   },
   {

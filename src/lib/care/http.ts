@@ -49,3 +49,17 @@ export function publicBaseUrl(req: NextRequest): string {
   if (host) return `${proto}://${host}`;
   return req.nextUrl.origin;
 }
+
+/**
+ * Base URL that Twilio can reach for the voice webhook. Prefers an explicit
+ * tunnel/deployment override (`CARE_VOICE_BASE_URL`) because Twilio cannot fetch
+ * a localhost or LAN address.
+ */
+export function voiceBaseUrl(req: NextRequest): string {
+  const override =
+    process.env.CARE_VOICE_BASE_URL ||
+    process.env.CARESPEAK_PUBLIC_URL ||
+    process.env.NEXT_PUBLIC_CARESPEAK_URL;
+  if (override) return override.replace(/\/+$/, "");
+  return publicBaseUrl(req);
+}

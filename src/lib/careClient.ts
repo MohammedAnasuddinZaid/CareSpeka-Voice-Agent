@@ -116,6 +116,20 @@ export async function careListPatients() {
   return request<{ patients: PatientSummary[] }>("/api/care/patients");
 }
 
+export async function careCreatePatient(input: {
+  displayName: string;
+  age?: number | string | null;
+  sex?: string;
+  room?: string;
+  primaryConcern?: string;
+  carePlan?: string;
+}) {
+  return request<{ patient: PatientSummary }>("/api/care/patients", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export async function careGetPatient(id: string) {
   return request<{
     patient: ClinicalPatient;
@@ -422,6 +436,15 @@ export interface PortalAnswer {
   cached: boolean;
   intent?: string;
   patientId: string | null;
+  /** Present when the request was a dictation that was carried out. */
+  action?: PortalMessageAction | null;
+}
+
+export interface PortalMessageAction {
+  type: "send_message";
+  patientId: string;
+  patientName: string;
+  text: string;
 }
 
 export interface PortalAlert {
@@ -464,5 +487,28 @@ export async function carePortalBrief(session: string, pair?: string | null) {
   return request<{ brief: { line: string; engine: "gemini" | "rules"; model: string } }>("/api/care/portal", {
     method: "POST",
     body: JSON.stringify({ session, pair: pair ?? undefined, action: "brief" }),
+  });
+}
+
+// --- emergency / demo phone call (real Twilio voice call) -------------------
+
+export interface CareCallResult {
+  reason: "emergency" | "demo";
+  to: string;
+  callSid?: string;
+  status: string;
+  attempts: number;
+  webhook: string;
+}
+
+/** Ask the server to phone the nurse and connect them to the CareSpeak agent. */
+export async function carePortalCall(
+  session: string,
+  pair?: string | null,
+  opts: { reason?: "emergency" | "demo" } = {}
+) {
+  return request<CareCallResult>("/api/care/call", {
+    method: "POST",
+    body: JSON.stringify({ session, pair: pair ?? undefined, reason: opts.reason ?? "demo" }),
   });
 }

@@ -3,13 +3,13 @@ import {
   alertPortal,
   askPortal,
   buildPortalContext,
+  executePortalAction,
   linkPortalSession,
   portalBriefing,
 } from "@/lib/care/portalBrain";
 import { appendAudit, getPatient } from "@/lib/care/repo";
 import { fail, ok, readBody } from "@/lib/care/http";
-import { nurseFromRequest } from "@/lib/care/auth";
-import { hasRegistration, verifyPairToken } from "@/lib/server/pairing";
+import { authorizeSession } from "@/lib/care/sessionAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -37,21 +37,6 @@ interface PortalBody {
   force?: boolean;
 }
 
-interface Access {
-  allowed: boolean;
-  actor?: { role: string; userId: string; displayName: string };
-}
-
-async function authorize(req: NextRequest, session: string, pair?: string | null): Promise<Access> {
-  const nurse = await nurseFromRequest(req);
-  if (nurse) {
-    return { allowed: true, actor: { role: nurse.role, userId: nurse.userId, displayName: nurse.displayName } };
-  }
-  if (pair && verifyPairToken(session, pair)) return { allowed: true };
-  if (!hasRegistration(session)) return { allowed: true };
-  return { allowed: false };
-}
-
 function normalizeSession(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const s = raw.trim().toUpperCase();
@@ -63,7 +48,7 @@ export async function GET(req: NextRequest) {
   const session = normalizeSession(url.searchParams.get("session"));
   if (!session) return fail("A valid session id is required.", 400);
 
-  const access = await authorize(req, session, url.searchParams.get("pair"));
+  const access = await authorizeSession(req, session, url.searchParams.get("pair"));
   if (!access.allowed) return fail("Scan the patient's QR code, or sign in, to use the assistant.", 401);
 
   return ok({ context: await buildPortalContext(session) });
@@ -74,7 +59,7 @@ export async function POST(req: NextRequest) {
   const session = normalizeSession(body?.session);
   if (!session) return fail("A valid session id is required.", 400);
 
-  const access = await authorize(req, session, body?.pair);
+  const access = await authorizeSession(req, session, body?.pair);
   if (!access.allowed) return fail("Scan the patient's QR code, or sign in, to use the assistant.", 401);
 
   const action = (body?.action ?? "context").trim();
@@ -91,6 +76,9 @@ export async function POST(req: NextRequest) {
     case "ask": {
       const question = (body?.question ?? "").trim().slice(0, 1000);
       const result = await askPortal(session, question);
+      // Dictation ("send a message to ...") is executed for real, so the
+      // patient's screen shows it — not just a promise in the chat.
+      if (result.action) await executePortalAction(result.action, access.actor);
       return ok({ result });
     }
 

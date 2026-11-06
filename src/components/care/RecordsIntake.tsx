@@ -16,14 +16,17 @@ import {
   FileText,
   Loader2,
   LogOut,
+  Plus,
   ShieldCheck,
   Trash2,
   Upload,
   User,
+  UserPlus,
 } from "lucide-react";
 import {
   CareApiError,
   careAddRecord,
+  careCreatePatient,
   careDeleteRecord,
   careListPatients,
   careListRecords,
@@ -60,6 +63,15 @@ export default function RecordsIntake() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // add-patient form
+  const [showAddPatient, setShowAddPatient] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newAge, setNewAge] = useState("");
+  const [newSex, setNewSex] = useState("");
+  const [newRoom, setNewRoom] = useState("");
+  const [newConcern, setNewConcern] = useState("");
+  const [creating, setCreating] = useState(false);
 
   const fileRef = useRef<HTMLInputElement | null>(null);
 
@@ -151,6 +163,38 @@ export default function RecordsIntake() {
       setError("That file could not be read. Try pasting its contents instead.");
     } finally {
       if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  const addPatient = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (!newName.trim()) {
+      setError("Enter the patient's name.");
+      return;
+    }
+    setCreating(true);
+    try {
+      const res = await careCreatePatient({
+        displayName: newName.trim(),
+        age: newAge.trim() === "" ? null : Number(newAge),
+        sex: newSex || undefined,
+        room: newRoom.trim() || undefined,
+        primaryConcern: newConcern.trim() || undefined,
+      });
+      setPatients((prev) => [res.patient, ...prev]);
+      setPatientId(res.patient.id);
+      setNewName("");
+      setNewAge("");
+      setNewSex("");
+      setNewRoom("");
+      setNewConcern("");
+      setShowAddPatient(false);
+      flash(`${res.patient.displayName} added. Add their records below.`);
+    } catch (err) {
+      setError(err instanceof CareApiError ? err.message : "Could not create the patient.");
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -265,6 +309,106 @@ export default function RecordsIntake() {
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> {error}
         </div>
       ) : null}
+
+      {/* add a patient */}
+      <section className="mb-6 rounded-2xl border border-[#ececec] bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="flex items-center gap-2 text-sm font-bold text-[#1f1f1f]">
+              <UserPlus className="h-4 w-4 text-[#c63a22]" /> Patients on this ward
+            </h2>
+            <p className="mt-0.5 text-xs text-[#6e6e6e]">
+              Add a patient once, then attach their documents below and link the bed&apos;s QR session from the nurse portal.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowAddPatient((v) => !v)}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-[#e5e5e5] bg-white px-3 py-2 text-xs font-semibold text-[#4b4b4b] hover:border-[#c63a22] hover:text-[#c63a22]"
+          >
+            <Plus className="h-3.5 w-3.5" /> {showAddPatient ? "Hide form" : "Add a new patient"}
+          </button>
+        </div>
+
+        {showAddPatient ? (
+          <form onSubmit={addPatient} className="mt-4 grid gap-3 sm:grid-cols-2">
+            <label className="block text-xs font-semibold text-[#6e6e6e] sm:col-span-2">
+              Full name
+              <input
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="e.g. Ravi Kumar"
+                maxLength={120}
+                className="mt-1.5 w-full rounded-xl border border-[#e5e5e5] bg-white px-3 py-2.5 text-sm font-normal text-[#1f1f1f] outline-none focus:border-[#c63a22]"
+              />
+            </label>
+            <div className="grid grid-cols-2 gap-3 sm:col-span-2">
+              <label className="block text-xs font-semibold text-[#6e6e6e]">
+                Age
+                <input
+                  type="number"
+                  min={0}
+                  max={130}
+                  value={newAge}
+                  onChange={(e) => setNewAge(e.target.value)}
+                  placeholder="Optional"
+                  className="mt-1.5 w-full rounded-xl border border-[#e5e5e5] bg-white px-3 py-2.5 text-sm font-normal text-[#1f1f1f] outline-none focus:border-[#c63a22]"
+                />
+              </label>
+              <label className="block text-xs font-semibold text-[#6e6e6e]">
+                Sex
+                <select
+                  value={newSex}
+                  onChange={(e) => setNewSex(e.target.value)}
+                  className="mt-1.5 w-full rounded-xl border border-[#e5e5e5] bg-white px-3 py-2.5 text-sm font-normal text-[#1f1f1f] outline-none focus:border-[#c63a22]"
+                >
+                  <option value="">Not recorded</option>
+                  <option value="female">Female</option>
+                  <option value="male">Male</option>
+                  <option value="other">Other</option>
+                </select>
+              </label>
+            </div>
+            <label className="block text-xs font-semibold text-[#6e6e6e]">
+              Room / bed <span className="font-normal normal-case text-[#9ca3af]">(optional)</span>
+              <input
+                value={newRoom}
+                onChange={(e) => setNewRoom(e.target.value)}
+                placeholder="Ward B / Bed 7"
+                maxLength={80}
+                className="mt-1.5 w-full rounded-xl border border-[#e5e5e5] bg-white px-3 py-2.5 text-sm font-normal text-[#1f1f1f] outline-none focus:border-[#c63a22]"
+              />
+            </label>
+            <label className="block text-xs font-semibold text-[#6e6e6e]">
+              Primary concern <span className="font-normal normal-case text-[#9ca3af]">(optional)</span>
+              <input
+                value={newConcern}
+                onChange={(e) => setNewConcern(e.target.value)}
+                placeholder="Post-discharge follow-up"
+                maxLength={200}
+                className="mt-1.5 w-full rounded-xl border border-[#e5e5e5] bg-white px-3 py-2.5 text-sm font-normal text-[#1f1f1f] outline-none focus:border-[#c63a22]"
+              />
+            </label>
+            <div className="flex items-center gap-2 sm:col-span-2">
+              <button
+                type="submit"
+                disabled={creating}
+                className="inline-flex items-center gap-2 rounded-xl bg-[#c63a22] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#a92f1b] disabled:opacity-50"
+              >
+                {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+                {creating ? "Adding..." : "Add patient"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowAddPatient(false)}
+                className="rounded-xl border border-[#e5e5e5] bg-white px-4 py-2.5 text-sm font-semibold text-[#6e6e6e] hover:text-[#1f1f1f]"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        ) : null}
+      </section>
 
       <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
         {/* form */}

@@ -32,6 +32,7 @@ import {
   VolumeX,
   Activity,
   Link2,
+  PhoneCall,
   ShieldCheck,
 } from "lucide-react";
 import {
@@ -39,6 +40,7 @@ import {
   carePortalAlert,
   carePortalAsk,
   carePortalBrief,
+  carePortalCall,
   carePortalContext,
   carePortalLink,
   type PortalAlert,
@@ -146,6 +148,12 @@ export default function PortalAssistant({
   const [showSettings, setShowSettings] = useState(false);
   const [speaking, setSpeaking] = useState(false);
 
+  // phone calling
+  const [autoCall, setAutoCall] = useState(true);
+  const [calling, setCalling] = useState(false);
+  const [callNotice, setCallNotice] = useState<string | null>(null);
+  const [callError, setCallError] = useState<string | null>(null);
+
   const resolvedPair = useMemo(() => {
     if (pair) return pair;
     if (typeof window === "undefined") return null;
@@ -163,6 +171,9 @@ export default function PortalAssistant({
   const voiceRef = useRef(voiceOn);
   voiceRef.current = voiceOn;
   const ttsAvailable = useMemo(() => speechSynthesisAvailable(), []);
+  const callingRef = useRef(false);
+  const hasPatientRef = useRef(false);
+  hasPatientRef.current = Boolean(context?.patient);
 
   const speakLine = useCallback((line: string) => {
     if (!voiceRef.current || !line) return;
@@ -176,6 +187,31 @@ export default function PortalAssistant({
       setSpeaking(false);
     }
   }, []);
+
+  // --- phone call ----------------------------------------------------------
+  const placeCall = useCallback(
+    async (reason: "emergency" | "demo") => {
+      if (!sessionId || callingRef.current) return;
+      callingRef.current = true;
+      setCalling(true);
+      setCallNotice(null);
+      setCallError(null);
+      try {
+        const res = await carePortalCall(sessionId, pairRef.current, { reason });
+        setCallNotice(
+          reason === "emergency"
+            ? `Emergency call placed to ${res.to}. The CareSpeak agent is briefing them now.`
+            : `Calling ${res.to}. The CareSpeak agent will brief you as soon as you answer.`
+        );
+      } catch (err) {
+        setCallError(err instanceof CareApiError ? err.message : "Could not place the call.");
+      } finally {
+        callingRef.current = false;
+        setCalling(false);
+      }
+    },
+    [sessionId]
+  );
 
   // --- context -------------------------------------------------------------
   const loadContext = useCallback(
@@ -262,6 +298,13 @@ export default function PortalAssistant({
               ...prev,
             ].slice(0, 12));
             if (passes) speakLine(alert.line);
+
+            // A critical reading also phones the nurse, unless they turned it off.
+            // The server dedupes with a 90s cooldown so a jittery sensor cannot
+            // place a burst of calls.
+            if (autoCall && alert.severity === "critical" && hasPatientRef.current) {
+              void placeCall("emergency");
+            }
           }
         }
       } catch {
@@ -275,7 +318,7 @@ export default function PortalAssistant({
       cancelled = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [alertInterval, autoAlert, sessionId, severityFloor, speakLine]);
+  }, [alertInterval, autoAlert, autoCall, placeCall, sessionId, severityFloor, speakLine]);
 
   // --- chat ----------------------------------------------------------------
   useEffect(() => {
@@ -437,6 +480,15 @@ export default function PortalAssistant({
             {engineLabel}
           </span>
           <button
+            onClick={() => void placeCall("demo")}
+            disabled={!patient || calling}
+            className="inline-flex items-center gap-1 rounded-full bg-[#c63a22] px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-[#a92f1b] disabled:opacity-50"
+            title="Call the care line and let the agent brief you"
+          >
+            {calling ? <Loader2 className="h-3 w-3 animate-spin" /> : <PhoneCall className="h-3 w-3" />}
+            {calling ? "Calling" : "Call me"}
+          </button>
+          <button
             onClick={() => setShowSettings((v) => !v)}
             className="inline-flex items-center gap-1 rounded-full border border-[#ececec] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#6e6e6e] hover:text-[#1f1f1f]"
             title="Advanced options"
@@ -464,6 +516,12 @@ export default function PortalAssistant({
             hint="Polls the live readings and speaks when a threshold is crossed."
             checked={autoAlert}
             onChange={setAutoAlert}
+          />
+          <Toggle
+            label="Phone me on a critical alert"
+            hint="Places a real call to the care line; the agent reads the situation aloud."
+            checked={autoCall}
+            onChange={setAutoCall}
           />
           <label className="block text-xs font-semibold text-[#6e6e6e]">
             Alert check interval
@@ -625,6 +683,17 @@ export default function PortalAssistant({
         {contextError ? (
           <div className="mb-3 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {contextError}
+          </div>
+        ) : null}
+
+        {callNotice ? (
+          <div className="mb-3 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+            <PhoneCall className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {callNotice}
+          </div>
+        ) : null}
+        {callError ? (
+          <div className="mb-3 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {callError}
           </div>
         ) : null}
 

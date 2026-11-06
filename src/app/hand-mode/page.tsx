@@ -14,6 +14,7 @@ import { getOrCreateSession } from "@/lib/session";
 import { useLiveSync } from "@/hooks/useLiveSync";
 import { addGestureLog } from "@/lib/gestureLog";
 import QRPairingDisplay from "@/components/QRPairingDisplay";
+import DemoCallButton from "@/components/care/DemoCallButton";
 import CompanionMessageInput from "@/components/CompanionMessageInput";
 import DemoModeControls from "@/components/DemoModeControls";
 import PatientMetricsCard from "@/components/PatientMetricsCard";
@@ -113,6 +114,7 @@ export default function HandModePage() {
         </motion.div>
 
         <QRPairingDisplay sessionId={sessionId} compact />
+        <DemoCallButton sessionId={sessionId} compact className="mb-4" />
         <CompanionMessageInput onSend={sendCompanionNote} />
         <NurseReplyBanner reply={latestReply?.from === "Nurse" ? latestReply : null} />
 

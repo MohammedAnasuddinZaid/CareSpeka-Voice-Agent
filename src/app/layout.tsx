@@ -74,12 +74,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 </div>
               </div>
               <div>
-                <h4 className="text-xs font-semibold text-[#1f1f1f] uppercase tracking-widest mb-4">Voice &amp; records</h4>
+                <h4 className="text-xs font-semibold text-[#1f1f1f] uppercase tracking-widest mb-4">Records</h4>
                 <div className="space-y-3">
                   {[
-                    { href: "/care", label: "Web Voice Call (Demo)" },
                     { href: "/care/records", label: "Patient Records" },
-                    { href: "/voicelink", label: "VoiceLink" },
                     { href: "/dashboard", label: "Dashboard" },
                     { href: "/logs", label: "Gesture Logs" },
                     { href: "/report", label: "Clinical Report" },

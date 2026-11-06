@@ -65,6 +65,48 @@ export async function getPatient(id: string): Promise<ClinicalPatient | null> {
   return p ?? getSeedPatient(id) ?? null;
 }
 
+/**
+ * Creates a new patient record the nurse can immediately add documents for and
+ * link to a bed's session. Real (non-synthetic) and empty at birth — conditions,
+ * medications, allergies and observations start blank and are added through the
+ * records intake, so nothing is invented.
+ */
+export async function createPatient(input: {
+  displayName: string;
+  age?: number | null;
+  sex?: string;
+  room?: string;
+  primaryConcern?: string;
+  carePlan?: string;
+  language?: string;
+}): Promise<ClinicalPatient> {
+  await ensurePatientsSeeded();
+  const d = await getDriver();
+  const index = ((await d.getDoc(K.patientIndex)) as string[] | null) ?? [];
+  const id = newId("pt");
+  const patient: ClinicalPatient = {
+    id,
+    extension: String(1000 + index.length + 1),
+    displayName: input.displayName.trim().slice(0, 120) || "Unnamed patient",
+    age: input.age ?? null,
+    sex: input.sex?.trim() || undefined,
+    room: input.room?.trim() || undefined,
+    primaryConcern: input.primaryConcern?.trim() || undefined,
+    language: input.language?.trim() || "en",
+    synthetic: false,
+    carePlan: input.carePlan?.trim() || undefined,
+    conditions: [],
+    medications: [],
+    allergies: [],
+    observations: [],
+    encounters: [],
+  };
+  await d.setDoc(K.patient(id), patient);
+  index.push(id);
+  await d.setDoc(K.patientIndex, index.slice(-2000));
+  return patient;
+}
+
 // ---------------------------------------------------------------------------
 // sessions
 // ---------------------------------------------------------------------------

@@ -20,6 +20,8 @@ import type { DeviceVitals, PatientMetrics } from "@/types";
 import { getSessionStore } from "@/lib/server/store";
 import { CareKeys as K, getDriver } from "./store";
 import {
+  addMessage,
+  appendAudit,
   buildRecordContext,
   getPatient,
   getSessionLink,
@@ -27,7 +29,12 @@ import {
   listPatients,
   listRecords,
 } from "./repo";
-import { answerQuestion, type AssistantContext, type PatientContext } from "./assistant";
+import {
+  answerQuestion,
+  type AssistantAction,
+  type AssistantContext,
+  type PatientContext,
+} from "./assistant";
 import { geminiConfigured, geminiGenerate, geminiModelLabel } from "./gemini";
 import type { ClinicalPatient, PatientRecord, SessionPatientLink } from "./types";
 
@@ -356,12 +363,82 @@ export async function linkPortalSession(
 
 export type Engine = "gemini" | "rules";
 
+/** An action the portal/voice agent can carry out on the nurse's behalf. */
+export type PortalAction = AssistantAction;
+
 export interface PortalAnswer {
   answer: string;
   engine: Engine;
   model: string;
   cached: boolean;
   intent?: string;
+  /** Present when the request was a dictation ("send a message to ..."). */
+  action?: PortalAction | null;
+}
+
+/**
+ * Parses a dictation for the one patient linked to this session.
+ *
+ * The portal is always scoped to a single patient, so the recipient can be the
+ * name, the first name, "the patient", or omitted entirely. Returns null when
+ * the text is not a dictation ("tell me about ..." stays a question).
+ */
+export function parsePortalDictation(
+  question: string,
+  patient: ClinicalPatient
+): { text: string } | null {
+  const m = question.match(
+    /^\s*(?:please\s+)?(?:can you\s+)?(?:send|message|text|tell|dictate)\b([\s\S]*)$/i
+  );
+  if (!m) return null;
+
+  let rest = m[1].trim();
+  // "tell me / tell us ..." is a question, never a dictation.
+  if (/^(?:me|us)\b/i.test(rest)) return null;
+
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const names = [patient.displayName, patient.displayName.split(" ")[0]]
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+
+  rest = rest.replace(/^\s*(?:a\s+)?(?:message|note|text)\s+to\s+/i, ""); // "a message to X"
+  rest = rest.replace(/^\s*(?:to|the patient|them|him|her|patient)\b/i, ""); // recipient
+  for (const name of names) {
+    rest = rest.replace(new RegExp(`^\\s*${esc(name)}\\b`, "i"), "");
+  }
+  rest = rest.replace(/^\s*(?:a\s+)?(?:message|note|text)\b/i, ""); // "a message"
+  rest = rest.replace(/^\s*(?:saying|that|to say|to|says|tell them|:|-|,)\s*/i, ""); // connector
+  rest = rest.replace(/^["']|["']$/g, "").trim();
+
+  if (!rest) return null;
+  return { text: rest.slice(0, 2000) };
+}
+
+/**
+ * Executes a portal action for real. Currently the only action is sending a
+ * message to the patient; it is persisted (so it shows on the patient screen)
+ * and audited, exactly like a message the nurse sends from the console.
+ */
+export async function executePortalAction(
+  action: PortalAction,
+  actor?: { role?: string; userId?: string; displayName?: string } | null
+): Promise<{ messageId: string } | null> {
+  if (action.type !== "send_message") return null;
+  const patient = await getPatient(action.patientId);
+  const message = await addMessage({
+    patientId: action.patientId,
+    patientName: patient?.displayName || action.patientName || "Patient",
+    text: action.text,
+    createdBy: actor?.displayName || "CareSpeak voice agent",
+  });
+  await appendAudit({
+    actorRole: actor?.role ?? "system",
+    actorId: actor?.userId,
+    action: "care.message_sent",
+    patientId: action.patientId,
+    detail: { messageId: message.id, via: "voice-assistant", chars: action.text.length },
+  });
+  return { messageId: message.id };
 }
 
 function assistantContextFor(patient: ClinicalPatient): AssistantContext {
@@ -417,7 +494,11 @@ function searchRecords(question: string, records: PatientRecord[]): PatientRecor
   });
 }
 
-export async function askPortal(sessionId: string, rawQuestion: string): Promise<PortalAnswer & { patientId: string | null }> {
+export async function askPortal(
+  sessionId: string,
+  rawQuestion: string,
+  opts: { voice?: boolean } = {}
+): Promise<PortalAnswer & { patientId: string | null }> {
   const question = rawQuestion.trim().slice(0, 1000);
   const ctx = await buildPortalContext(sessionId);
 
@@ -445,6 +526,27 @@ export async function askPortal(sessionId: string, rawQuestion: string): Promise
   }
 
   const patient = ctx.patient;
+
+  // Dictation has a side effect (a real message), so it is handled before the
+  // answer cache and is never cached. The route/voice webhook executes it.
+  const dictation = parsePortalDictation(question, patient);
+  if (dictation) {
+    return {
+      answer: `I'll send that to ${patient.displayName}: "${dictation.text}". It will appear on their screen.`,
+      engine: "rules",
+      model: "rules",
+      cached: false,
+      intent: "send_message",
+      action: {
+        type: "send_message",
+        patientId: patient.id,
+        patientName: patient.displayName,
+        text: dictation.text,
+      },
+      patientId: patient.id,
+    };
+  }
+
   const records = await listRecords(patient.id);
   const key = cacheKey([
     "answer",
@@ -483,12 +585,18 @@ export async function askPortal(sessionId: string, rawQuestion: string): Promise
       }`,
       matchedText ? `MOST RELEVANT RECORD EXCERPTS\n${matchedText}` : "",
       `LIVE SIGNALS\n${signalBlock(ctx.findings, ctx.metrics)}`,
+      opts.voice ? "MODE\nYou are speaking this answer aloud on the phone. Keep it to two short sentences." : "",
       `QUESTION\n${question}`,
     ]
       .filter(Boolean)
       .join("\n\n");
 
-    const result = await geminiGenerate({ system: ANSWER_SYSTEM, prompt, maxTokens: 400, temperature: 0.2 });
+    const result = await geminiGenerate({
+      system: ANSWER_SYSTEM,
+      prompt,
+      maxTokens: opts.voice ? 220 : 400,
+      temperature: 0.2,
+    });
     if (result) {
       await cachePut(key, result.text, result.model);
       return { answer: result.text, engine: "gemini", model: result.model, cached: false, patientId: patient.id };
@@ -628,4 +736,31 @@ export async function portalBriefing(sessionId: string): Promise<{ line: string;
     return { line: result.text, engine: "gemini", model: result.model };
   }
   return { line: base, engine: "rules", model: "rules" };
+}
+
+/**
+ * The full situation the agent speaks the moment the phone is answered: who the
+ * patient is, why they are being monitored, and every live reading that has left
+ * its threshold. Deterministic — the call never waits on a model to start.
+ */
+export function voiceOpening(ctx: PortalContext): string {
+  if (!ctx.patient) {
+    return "CareSpeak agent here. No patient is linked to this session yet. Link a patient in the nurse portal, then ask me about their history and live readings.";
+  }
+  const p = ctx.patient;
+  const parts = [`CareSpeak alert line. This is about ${p.displayName}${p.room ? `, ${p.room}` : ""}.`];
+  if (p.primaryConcern) parts.push(`Reason for care: ${p.primaryConcern}.`);
+  if (ctx.findings.length) {
+    parts.push(
+      `Live readings that need attention: ${ctx.findings
+        .map((f) => `${f.label} ${f.reading}, ${f.note}`)
+        .join("; ")}.`
+    );
+  } else {
+    parts.push("All monitored readings are currently inside their thresholds.");
+  }
+  parts.push(
+    "You can ask me about the patient's history, medications, allergies or records, or tell me a message to send them."
+  );
+  return parts.join(" ");
 }
