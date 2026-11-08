@@ -734,7 +734,13 @@ export function rulesAlertLine(patient: ClinicalPatient | null, findings: Signal
   const who = patient ? patient.displayName : "The patient";
   const worst = findings[0];
   if (worst.key === "signal_stale") {
-    return `No fresh device readings for ${worst.reading.replace(" ago", "")}. Please check the patient's device and the patient now.`;
+    const seconds = Number(worst.reading.replace(/[^0-9]/g, ""));
+    const duration = Number.isFinite(seconds) && seconds > 0
+      ? seconds >= 120
+        ? `${Math.round(seconds / 60)} minutes`
+        : `${seconds} seconds`
+      : worst.reading;
+    return `No fresh device readings for ${duration}. Please check the patient's device and the patient now.`;
   }
   const rest = findings.slice(1, 3).map((f) => `${f.label.toLowerCase()} ${f.reading}`);
   const tail = rest.length ? `, with ${rest.join(" and ")}` : "";
@@ -800,7 +806,7 @@ export async function portalBriefing(sessionId: string): Promise<{ line: string;
       : "No live readings yet from this session. Make sure the patient device is streaming.";
     if (ctx.findings.length) {
       return {
-        line: `${live} Outside the thresholds: ${ctx.findings.map((f) => `${f.label} ${f.reading}`).join(", ")}. Please check the device and the patient.`,
+        line: `${live} ${rulesAlertLine(null, ctx.findings)}`,
         engine: "rules",
         model: "rules",
       };
