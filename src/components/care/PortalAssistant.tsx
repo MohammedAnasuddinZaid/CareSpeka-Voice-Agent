@@ -45,14 +45,19 @@ import {
   carePortalCall,
   carePortalContext,
   carePortalLink,
+  carePortalSbar,
   carePortalUnlink,
   type PortalAlert,
   type PortalContext,
+  type PortalSbar,
   type PortalSeverity,
 } from "@/lib/careClient";
 import { speak, speechSynthesisAvailable, stopSpeaking } from "@/lib/care/browserAI";
 import { getActiveCareSession, rememberCareSession } from "@/lib/session";
 import FreeCallPanel from "@/components/care/FreeCallPanel";
+import PatientSnapshot from "@/components/care/PatientSnapshot";
+import SbarCard from "@/components/care/SbarCard";
+import type { PortalDetail } from "@/lib/careClient";
 
 // ---------------------------------------------------------------------------
 // speech input (browser Web Speech API, optional)
@@ -136,7 +141,7 @@ export default function PortalAssistant({
 
   const [pickedPatient, setPickedPatient] = useState("");
   const [linking, setLinking] = useState(false);
-  const [showDemoPatients, setShowDemoPatients] = useState(false);
+  const [showDemoPatients, setShowDemoPatients] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -162,6 +167,13 @@ export default function PortalAssistant({
   const [callNotice, setCallNotice] = useState<string | null>(null);
   const [callError, setCallError] = useState<string | null>(null);
   const [freeOpen, setFreeOpen] = useState(false);
+
+  // advanced
+  const [detail, setDetail] = useState<PortalDetail>("standard");
+  const [sbar, setSbar] = useState<PortalSbar | null>(null);
+  const [sbarLoading, setSbarLoading] = useState(false);
+  const [sbarError, setSbarError] = useState<string | null>(null);
+  const [followUps, setFollowUps] = useState<string[]>([]);
 
   const resolvedPair = useMemo(() => {
     if (pair) return pair;
@@ -194,11 +206,14 @@ export default function PortalAssistant({
   const contextReqRef = useRef(0);
   const hasPatientRef = useRef(false);
   hasPatientRef.current = Boolean(context?.patient);
+  const turnsRef = useRef<Turn[]>([]);
+  turnsRef.current = turns;
 
-  // Reset per-session memory when the session changes.
   useEffect(() => {
     briefedRef.current = null;
     lastSigRef.current = "";
+    setFollowUps([]);
+    setSbar(null);
   }, [sessionId]);
 
   const speakLine = useCallback((line: string) => {
@@ -367,12 +382,17 @@ export default function PortalAssistant({
       setThinking(true);
       setTurns((t) => [...t, { id: ++idRef.current, role: "nurse", text: question }]);
       try {
-        const res = await carePortalAsk(sessionId, question, pairRef.current);
+        const history = turnsRef.current.slice(-8).map((t) => ({
+          role: t.role === "nurse" ? "nurse" : "assistant",
+          text: t.text,
+        })) as Array<{ role: "nurse" | "assistant"; text: string }>;
+        const res = await carePortalAsk(sessionId, question, pairRef.current, { detail, history });
         const r = res.result;
         setTurns((t) => [
           ...t,
           { id: ++idRef.current, role: "assistant", text: r.answer, engine: r.engine, model: r.model, cached: r.cached, intent: r.intent },
         ]);
+        setFollowUps(r.followUps ?? []);
         speakLine(r.answer);
       } catch (err) {
         setChatError(err instanceof CareApiError ? err.message : "The assistant could not answer. Try again.");
@@ -380,7 +400,7 @@ export default function PortalAssistant({
         setThinking(false);
       }
     },
-    [sessionId, speakLine, thinking]
+    [detail, sessionId, speakLine, thinking]
   );
 
   const toggleListen = useCallback(() => {
@@ -425,6 +445,20 @@ export default function PortalAssistant({
   };
 
   // --- linking -------------------------------------------------------------
+  const generateSbar = async () => {
+    if (!sessionId || sbarLoading) return;
+    setSbarLoading(true);
+    setSbarError(null);
+    try {
+      const res = await carePortalSbar(sessionId, pairRef.current);
+      setSbar(res.sbar);
+    } catch (err) {
+      setSbarError(err instanceof CareApiError ? err.message : "Could not build the handoff.");
+    } finally {
+      setSbarLoading(false);
+    }
+  };
+
   const linkPatient = async () => {
     if (!sessionId || !pickedPatient || linking) return;
     setLinking(true);
@@ -436,6 +470,8 @@ export default function PortalAssistant({
       setAlerts([]);
       lastSigRef.current = "";
       briefedRef.current = null;
+      setFollowUps([]);
+      setSbar(null);
     } catch (err) {
       setContextError(err instanceof CareApiError ? err.message : "Could not link that patient.");
     } finally {
@@ -476,9 +512,11 @@ const removePatient = async (id: string) => {
   const severityStyle = SEVERITY_STYLE[worst];
   const findingCount = context?.findings.length ?? 0;
   const suggestions = patient
-    ? context?.suggestedQuestions?.length
-      ? context.suggestedQuestions
-      : ["What is this patient's history?", "What medications are they on?", "Is anything urgent right now?"]
+    ? (followUps.length
+        ? [...new Set([...followUps, ...(context?.suggestedQuestions ?? [])])]
+        : context?.suggestedQuestions?.length
+          ? context.suggestedQuestions
+          : ["What is this patient's history?", "What medications are they on?", "Is anything urgent right now?"])
     : ["What are the live readings?", "Is anything urgent right now?", "What should I check first?"];
   const engineLabel = context?.engine.gemini ? context.engine.model : "local rules";
 
@@ -540,6 +578,17 @@ const removePatient = async (id: string) => {
             {calling ? <Loader2 className="h-3 w-3 animate-spin" /> : <PhoneCall className="h-3 w-3" />}
             {calling ? "Calling" : "Call me"}
           </button>
+          {patient ? (
+            <button
+              onClick={() => void generateSbar()}
+              disabled={sbarLoading}
+              className="inline-flex items-center gap-1 rounded-full border border-[#ececec] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#6e6e6e] transition hover:border-[#c63a22] hover:text-[#c63a22] disabled:opacity-50"
+              title="Generate an SBAR handoff from the record and live readings"
+            >
+              {sbarLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
+              SBAR
+            </button>
+          ) : null}
           <button
             onClick={() => setFreeOpen((v) => !v)}
             disabled={!sessionId}
@@ -559,6 +608,8 @@ const removePatient = async (id: string) => {
                   setAlerts([]);
                   lastSigRef.current = "";
                   briefedRef.current = null;
+                  setFollowUps([]);
+                  setSbar(null);
                 } catch (err) {
                   setContextError(err instanceof CareApiError ? err.message : "Could not unlink.");
                 }
@@ -640,6 +691,18 @@ const removePatient = async (id: string) => {
             </select>
           </label>
           <div className="sm:col-span-2 flex flex-wrap items-center gap-2">
+            <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#6e6e6e]">
+              Answer depth
+              <select
+                value={detail}
+                onChange={(e) => setDetail(e.target.value as PortalDetail)}
+                className="rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-2 text-sm font-normal text-[#1f1f1f]"
+              >
+                <option value="brief">Brief (2 sentences)</option>
+                <option value="standard">Standard</option>
+                <option value="deep">Deep history</option>
+              </select>
+            </label>
             <button
               onClick={refreshNow}
               disabled={loadingContext}
@@ -674,23 +737,56 @@ const removePatient = async (id: string) => {
         </div>
       ) : null}
 
-      {/* optional patient link — live readings work without it */}
-      {!patient ? (
+      {/* patient context — live readings work without it, but a link adds history */}
+      {sessionId ? (
         <div className="border-b border-[#f0e3de] px-5 py-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-1.5 text-sm font-semibold text-[#1f1f1f]">
-              <Activity className="h-4 w-4 text-[#c63a22]" /> Live session {sessionId}
-              <span className="text-[11px] font-normal text-[#6e6e6e]">
-                readings only — patient history is optional
-              </span>
+              <Activity className="h-4 w-4 text-[#c63a22]" />
+              {patient ? (
+                <>
+                  {patient.displayName}
+                  {patient.room ? <span className="text-[11px] font-normal text-[#6e6e6e]">· {patient.room}</span> : null}
+                </>
+              ) : (
+                <>
+                  Live session {sessionId}
+                  <span className="text-[11px] font-normal text-[#6e6e6e]">readings only — history optional</span>
+                </>
+              )}
             </div>
-            <button
-              type="button"
-              onClick={() => setShowLinkPatient((v) => !v)}
-              className="inline-flex items-center gap-1 rounded-full border border-[#e5e5e5] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#6e6e6e] hover:border-[#c63a22] hover:text-[#c63a22]"
-            >
-              <Link2 className="h-3 w-3" /> {showLinkPatient ? "Hide patient options" : "Link patient (optional)"}
-            </button>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {patient ? (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!sessionId) return;
+                    try {
+                      const res = await carePortalUnlink(sessionId, pairRef.current);
+                      setContext(res.context);
+                      setTurns([]);
+                      setAlerts([]);
+                      lastSigRef.current = "";
+                      briefedRef.current = null;
+                      setFollowUps([]);
+                      setSbar(null);
+                    } catch (err) {
+                      setContextError(err instanceof CareApiError ? err.message : "Could not unlink.");
+                    }
+                  }}
+                  className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-semibold text-red-700 transition hover:bg-red-100"
+                >
+                  Unlink
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => setShowLinkPatient((v) => !v)}
+                className="inline-flex items-center gap-1 rounded-full border border-[#e5e5e5] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#6e6e6e] hover:border-[#c63a22] hover:text-[#c63a22]"
+              >
+                <Link2 className="h-3 w-3" /> {showLinkPatient ? "Hide patient options" : patient ? "Switch patient" : "Link patient (optional)"}
+              </button>
+            </div>
           </div>
 
           {showLinkPatient ? (
@@ -718,7 +814,7 @@ const removePatient = async (id: string) => {
                   className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#c63a22] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#a92f1b] disabled:opacity-50"
                 >
                   {linking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
-                  Link patient
+                  {patient ? "Switch" : "Link patient"}
                 </button>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -795,6 +891,26 @@ const removePatient = async (id: string) => {
               Waiting for the patient device to stream blink rate, alertness, eye closure and movement.
             </p>
           )}
+        </div>
+      ) : null}
+
+      {/* chart snapshot + handoff */}
+      {sessionId ? (
+        <div className="border-b border-[#f0e3de] px-5 py-3">
+          {sbarError ? (
+            <div className="mb-2 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {sbarError}
+            </div>
+          ) : null}
+          {sbar ? <SbarCard sbar={sbar} onClose={() => setSbar(null)} /> : null}
+          <details className="mt-2 rounded-xl border border-[#ececec] bg-[#fbfaf9] p-3">
+            <summary className="cursor-pointer text-[11px] font-semibold text-[#6e6e6e] hover:text-[#c63a22]">
+              Chart snapshot &amp; history
+            </summary>
+            <div className="mt-3">
+              <PatientSnapshot patient={patient} records={context?.records ?? []} />
+            </div>
+          </details>
         </div>
       ) : null}
 

@@ -6,6 +6,7 @@ import {
   executePortalAction,
   linkPortalSession,
   portalBriefing,
+  sbarPortal,
   unlinkPortalSession,
 } from "@/lib/care/portalBrain";
 import { appendAudit, getPatient } from "@/lib/care/repo";
@@ -36,6 +37,9 @@ interface PortalBody {
   patientId?: string;
   question?: string;
   force?: boolean;
+  voice?: boolean;
+  detail?: string;
+  history?: unknown;
 }
 
 function normalizeSession(raw: unknown): string | null {
@@ -76,11 +80,36 @@ export async function POST(req: NextRequest) {
 
     case "ask": {
       const question = (body?.question ?? "").trim().slice(0, 1000);
-      const result = await askPortal(session, question);
+      const detail =
+        body?.detail === "brief" || body?.detail === "deep" ? body.detail : "standard";
+      const history = Array.isArray(body?.history)
+        ? (body.history as Array<{ role?: unknown; text?: unknown }>).map((t) => ({
+            role: t?.role === "assistant" ? "assistant" : "nurse",
+            text: typeof t?.text === "string" ? t.text : "",
+          }))
+        : undefined;
+      const result = await askPortal(session, question, {
+        voice: Boolean(body?.voice),
+        detail,
+        history,
+      });
       // Dictation ("send a message to ...") is executed for real, so the
       // patient's screen shows it — not just a promise in the chat.
       if (result.action) await executePortalAction(result.action, access.actor);
       return ok({ result });
+    }
+
+    case "sbar": {
+      const sbar = await sbarPortal(session);
+      if (!sbar) return fail("Link a patient to generate an SBAR handoff.", 400);
+      await appendAudit({
+        actorRole: access.actor?.role ?? "nurse",
+        actorId: access.actor?.userId,
+        action: "care.sbar_generated",
+        sessionId: session,
+        patientId: sbar.patientId,
+      });
+      return ok({ sbar });
     }
 
     case "alert": {

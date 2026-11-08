@@ -403,7 +403,26 @@ export async function careDeleteRecord(id: string) {
 
 // --- nurse-portal live assistant (session scoped) --------------------------
 
+export type PortalDetail = "brief" | "standard" | "deep";
 export type PortalSeverity = "critical" | "warning" | "watch" | "ok";
+
+export interface PortalChatTurn {
+  role: "nurse" | "assistant";
+  text: string;
+}
+
+export interface PortalSbar {
+  sessionId: string;
+  patientId: string;
+  patientName: string;
+  generatedAt: string;
+  synthetic: boolean;
+  situation: string;
+  background: string;
+  assessment: string;
+  recommendation: string;
+  text: string;
+}
 
 export interface PortalSignalFinding {
   key: string;
@@ -444,6 +463,8 @@ export interface PortalAnswer {
   patientId: string | null;
   /** Present when the request was a dictation that was carried out. */
   action?: PortalMessageAction | null;
+  /** Suggested next questions, grounded in the current patient and readings. */
+  followUps?: string[];
 }
 
 export interface PortalMessageAction {
@@ -482,10 +503,34 @@ export async function carePortalUnlink(session: string, pair?: string | null) {
   });
 }
 
-export async function carePortalAsk(session: string, question: string, pair?: string | null) {
+export async function carePortalAsk(
+  session: string,
+  question: string,
+  pair?: string | null,
+  opts: {
+    voice?: boolean;
+    detail?: PortalDetail;
+    history?: PortalChatTurn[];
+  } = {}
+) {
   return request<{ result: PortalAnswer }>("/api/care/portal", {
     method: "POST",
-    body: JSON.stringify({ session, pair: pair ?? undefined, action: "ask", question }),
+    body: JSON.stringify({
+      session,
+      pair: pair ?? undefined,
+      action: "ask",
+      question,
+      voice: opts.voice,
+      detail: opts.detail,
+      history: opts.history,
+    }),
+  });
+}
+
+export async function carePortalSbar(session: string, pair?: string | null) {
+  return request<{ sbar: PortalSbar }>("/api/care/portal", {
+    method: "POST",
+    body: JSON.stringify({ session, pair: pair ?? undefined, action: "sbar" }),
   });
 }
 

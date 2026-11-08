@@ -58,6 +58,7 @@ export const SYNTHETIC_PATIENTS: ClinicalPatient[] = [
     encounters: [
       { id: "e1", at: daysAgo(9), kind: "in-person", by: "Dr. Rao", summary: "Discharged after heart-failure exacerbation. Advised daily weights." },
       { id: "e2", at: daysAgo(5), kind: "web-voice-call", by: "Nurse Demo", summary: "Baseline check-in. Reported mild fatigue, no breathlessness at rest." },
+      { id: "e3", at: daysAgo(2), kind: "web-voice-call", by: "CareSpeak agent", summary: "Reported two-kilogram weight gain, ankle swelling and needing an extra pillow at night. Escalated to the nurse." },
     ],
   },
   {
@@ -122,6 +123,7 @@ export const SYNTHETIC_PATIENTS: ClinicalPatient[] = [
     ],
     encounters: [
       { id: "e1", at: daysAgo(20), kind: "in-person", by: "Dr. Rao", summary: "Reported occasional dizziness on standing." },
+      { id: "e2", at: daysAgo(7), kind: "telephony", by: "Nurse Demo", summary: "Near-fall in the bathroom. Advised to sit down when dizzy and to keep the phone nearby." },
     ],
   },
   {
@@ -151,7 +153,88 @@ export const SYNTHETIC_PATIENTS: ClinicalPatient[] = [
     ],
     encounters: [{ id: "e1", at: daysAgo(60), kind: "in-person", by: "Dr. Menon", summary: "Routine asthma review. Control adequate." }],
   },
+  {
+    id: "pt_0005",
+    extension: "1005",
+    displayName: "Meera Nair",
+    age: 81,
+    sex: "female",
+    room: "Ward C / Bed 2",
+    primaryConcern: "COPD exacerbation recovery and oxygen weaning",
+    language: "en",
+    synthetic: true,
+    carePlan:
+      "Check SpO₂ on room air twice daily, complete the steroid taper, review inhaler technique and refer to pulmonary rehabilitation.",
+    conditions: [
+      { id: "c1", code: "J44.1", name: "Chronic obstructive pulmonary disease (GOLD III)", status: "active", since: "2018-01-15" },
+      { id: "c2", code: "I10", name: "Essential hypertension", status: "active", since: "2011-06-30" },
+      { id: "c3", code: "F41.9", name: "Anxiety disorder", status: "active", since: "2020-10-12", note: "Breathlessness can trigger anxiety" },
+    ],
+    medications: [
+      { id: "m1", name: "Tiotropium", dose: "18 µg", route: "inhaled", frequency: "once daily", status: "active", since: "2018-01-20" },
+      { id: "m2", name: "Salbutamol", dose: "100 µg", route: "inhaled", frequency: "as needed", status: "active", since: "2018-01-20" },
+      { id: "m3", name: "Prednisolone", dose: "30 mg", route: "oral", frequency: "once daily, tapering over 5 days", status: "active", since: "2026-10-28" },
+      { id: "m4", name: "Amlodipine", dose: "5 mg", route: "oral", frequency: "once daily", status: "active", since: "2011-07-02" },
+    ],
+    allergies: [],
+    observations: [
+      { id: "o1", label: "SpO₂ on 1 L oxygen", value: 91, unit: "%", at: daysAgo(2), provenance: "record" },
+      { id: "o2", label: "SpO₂ after walking (2 L oxygen)", value: 94, unit: "%", at: daysAgo(2), provenance: "record" },
+      { id: "o3", label: "Respiratory rate", value: 22, unit: "/min", at: daysAgo(2), provenance: "record" },
+      { id: "o4", label: "Heart rate", value: 96, unit: "bpm", at: daysAgo(2), provenance: "record" },
+      { id: "o5", label: "Temperature", value: 37.2, unit: "°C", at: daysAgo(2), provenance: "record" },
+      { id: "o6", label: "Weight", value: 54.0, unit: "kg", at: daysAgo(2), provenance: "record" },
+    ],
+    encounters: [
+      { id: "e1", at: daysAgo(9), kind: "in-person", by: "Dr. Menon", summary: "Admitted with an infective COPD exacerbation. Treated with nebulisers and intravenous steroids." },
+      { id: "e2", at: daysAgo(5), kind: "in-person", by: "Dr. Menon", summary: "Discharged on a prednisolone taper and home oxygen at 1 L/min. Follow-up in one week." },
+      { id: "e3", at: daysAgo(3), kind: "web-voice-call", by: "CareSpeak agent", summary: "Reported breathlessness on walking to the bathroom and anxiety about the oxygen wean. Advised to rest and continue the taper." },
+    ],
+  },
+  {
+    id: "pt_0006",
+    extension: "1006",
+    displayName: "David Fernandes",
+    age: 39,
+    sex: "male",
+    room: "Home care",
+    primaryConcern: "Post-operative wound review after appendectomy",
+    language: "en",
+    synthetic: true,
+    carePlan:
+      "Check the wound daily, record temperature twice daily, use paracetamol for pain, avoid lifting over 5 kg for two weeks and report spreading redness or fever.",
+    conditions: [
+      { id: "c1", code: "K35.80", name: "Acute appendicitis", status: "resolved", since: "2026-10-31", note: "Laparoscopic appendectomy, uncomplicated recovery" },
+      { id: "c2", code: "E66.9", name: "Obesity", status: "active", since: "2022-04-18" },
+    ],
+    medications: [
+      { id: "m1", name: "Paracetamol", dose: "1 g", route: "oral", frequency: "up to four times daily as needed", status: "active", since: "2026-10-31" },
+      { id: "m2", name: "Amoxicillin-clavulanate", dose: "625 mg", route: "oral", frequency: "three times daily, day 3 of 5", status: "active", since: "2026-11-06" },
+    ],
+    allergies: [],
+    observations: [
+      { id: "o1", label: "Temperature", value: 37.8, unit: "°C", at: daysAgo(2), provenance: "record" },
+      { id: "o2", label: "Temperature", value: 37.2, unit: "°C", at: daysAgo(1), provenance: "record" },
+      { id: "o3", label: "Pain score", value: 4, unit: "/10", at: daysAgo(2), provenance: "record" },
+      { id: "o4", label: "Pain score", value: 2, unit: "/10", at: daysAgo(1), provenance: "record" },
+    ],
+    encounters: [
+      { id: "e1", at: daysAgo(8), kind: "in-person", by: "Dr. Rao", summary: "Laparoscopic appendectomy. Discharged on day two with wound-care instructions." },
+      { id: "e2", at: daysAgo(6), kind: "telephony", by: "Nurse Demo", summary: "Telephone follow-up. Pain controlled with paracetamol; no fever at that time." },
+      { id: "e3", at: daysAgo(2), kind: "in-person", by: "Community nurse", summary: "Wound review: mild erythema at the inferior port site, no discharge. Started oral antibiotics and arranged review." },
+    ],
+  },
 ];
+
+/** Bump when the synthetic dataset changes so existing stores reconcile it. */
+export const SYNTHETIC_SEED_VERSION = 2;
+
+/**
+ * Patients added after the first seed. Reconciliation only ever adds these to
+ * an existing store; older synthetic patients are refreshed but never
+ * resurrected if the nurse deleted them.
+ */
+export const SYNTHETIC_ADDITION_IDS = new Set(["pt_0005", "pt_0006"]);
 
 export function getSeedPatient(id: string): ClinicalPatient | undefined {
   return SYNTHETIC_PATIENTS.find((p) => p.id === id);

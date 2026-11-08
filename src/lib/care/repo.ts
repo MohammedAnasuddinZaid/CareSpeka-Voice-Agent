@@ -5,7 +5,7 @@
  * driver stays swappable. Server-only.
  */
 import { getDriver, CareKeys as K, type DriverName } from "./store";
-import { getSeedPatient, SYNTHETIC_PATIENTS } from "./seedPatients";
+import { getSeedPatient, SYNTHETIC_ADDITION_IDS, SYNTHETIC_PATIENTS, SYNTHETIC_SEED_VERSION } from "./seedPatients";
 import { hashToken, isExpired, isoNow, newId, newJoinCode, newToken } from "./crypto";
 import type {
   CareAuditEntry,
@@ -22,7 +22,7 @@ import type {
   PatientRecord,
   SessionPatientLink,
 } from "./types";
-import { ensureDemoSeed } from "./seedDemo";
+import { ensureDemoSeed, ensurePatientRecordSeed } from "./seedDemo";
 
 // ---------------------------------------------------------------------------
 // store info
@@ -39,25 +39,52 @@ export async function getStoreInfo(): Promise<{ driver: DriverName; persistent: 
 
 async function ensurePatientsSeeded(): Promise<void> {
   const d = await getDriver();
-  const seeded = await d.getDoc(K.patientSeeded);
-  const index = (await d.getDoc(K.patientIndex)) as string[] | null;
-  if (seeded) return;
-  if (index && index.length) {
-    await d.setDoc(K.patientSeeded, true);
-    return;
-  }
+
   if ((process.env.CARE_SEED_DEMO ?? "").toLowerCase() === "false") {
-    await d.setDoc(K.patientSeeded, true);
+    if (!(await d.getDoc(K.patientSeeded))) await d.setDoc(K.patientSeeded, true);
     return;
   }
-  for (const p of SYNTHETIC_PATIENTS) await d.setDoc(K.patient(p.id), p);
-  await d.setDoc(K.patientIndex, SYNTHETIC_PATIENTS.map((p) => p.id));
-  await d.setDoc(K.patientSeeded, true);
+
+  const seeded = await d.getDoc(K.patientSeeded);
+  const index = ((await d.getDoc(K.patientIndex)) as string[] | null) ?? [];
+  const version = Number((await d.getDoc(K.patientSeedVersion)) ?? 0) || 0;
+
+  // First run: write the whole synthetic dataset.
+  if (!seeded && !index.length) {
+    for (const p of SYNTHETIC_PATIENTS) await d.setDoc(K.patient(p.id), p);
+    await d.setDoc(K.patientIndex, SYNTHETIC_PATIENTS.map((p) => p.id));
+    await d.setDoc(K.patientSeeded, true);
+    await d.setDoc(K.patientSeedVersion, SYNTHETIC_SEED_VERSION);
+  } else if (version < SYNTHETIC_SEED_VERSION) {
+    // Existing store: refresh synthetic patients and add only the newly
+    // introduced ones. A deleted patient has a tombstone, so it is never
+    // resurrected here.
+    const nextIndex = new Set(index);
+    for (const p of SYNTHETIC_PATIENTS) {
+      if (await d.getDoc(K.patientDeleted(p.id))) {
+        nextIndex.delete(p.id);
+        continue;
+      }
+      const existing = (await d.getDoc(K.patient(p.id))) as ClinicalPatient | null;
+      if (existing) {
+        if (existing.synthetic) await d.setDoc(K.patient(p.id), p);
+        nextIndex.add(p.id);
+      } else if (SYNTHETIC_ADDITION_IDS.has(p.id)) {
+        await d.setDoc(K.patient(p.id), p);
+        nextIndex.add(p.id);
+      }
+    }
+    await d.setDoc(K.patientIndex, [...nextIndex]);
+    await d.setDoc(K.patientSeedVersion, SYNTHETIC_SEED_VERSION);
+    if (!seeded) await d.setDoc(K.patientSeeded, true);
+  }
+
+  await ensurePatientRecordSeed();
 }
 
 export async function listPatients(): Promise<ClinicalPatient[]> {
-  await ensureDemoSeed();
   await ensurePatientsSeeded();
+  await ensureDemoSeed();
   const d = await getDriver();
   const index = ((await d.getDoc(K.patientIndex)) as string[] | null) ?? [];
   const out: ClinicalPatient[] = [];
@@ -72,7 +99,9 @@ export async function getPatient(id: string): Promise<ClinicalPatient | null> {
   await ensurePatientsSeeded();
   const d = await getDriver();
   const p = (await d.getDoc(K.patient(id))) as ClinicalPatient | null;
-  return p ?? getSeedPatient(id) ?? null;
+  if (p) return p;
+  if (await d.getDoc(K.patientDeleted(id))) return null;
+  return getSeedPatient(id) ?? null;
 }
 
 /**
@@ -142,6 +171,9 @@ export async function deletePatient(id: string): Promise<boolean> {
   await d.setList(K.recordIndex, keptRecordIds);
 
   await d.del(K.patient(id));
+  // Tombstone so demo reconciliation can never resurrect a patient the nurse
+  // deliberately removed.
+  await d.setDoc(K.patientDeleted(id), { at: isoNow() });
   const index = ((await d.getDoc(K.patientIndex)) as string[] | null) ?? [];
   await d.setDoc(K.patientIndex, index.filter((x) => x !== id));
   return true;

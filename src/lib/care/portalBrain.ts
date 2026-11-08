@@ -116,21 +116,34 @@ export function analyzeSignals(
       key: "low_movement",
       severity: "watch",
       label: "Movement",
-      reading: movement.toFixed(2),
+      reading: `${Math.round(movement * 100)}%`,
       note: "very little movement detected",
     });
   }
 
-  // device went quiet / patient unresponsive
-  const lastSeen = metrics?.lastSeen;
-  if (lastSeen) {
-    const ageMs = Date.now() - new Date(lastSeen).getTime();
+  // The freshest signal from either the camera metrics or the wearable. A
+  // camera-only stream and a wearable-only stream both count as "the device".
+  const seenAt: number[] = [];
+  if (metrics?.lastSeen) {
+    const t = Date.parse(metrics.lastSeen);
+    if (Number.isFinite(t)) seenAt.push(t);
+  }
+  if (vitals?.receivedAt != null) {
+    const t = Number(vitals.receivedAt);
+    if (Number.isFinite(t)) seenAt.push(t);
+  }
+  if (seenAt.length) {
+    const ageMs = Date.now() - Math.max(...seenAt);
     if (Number.isFinite(ageMs) && ageMs > 60_000) {
+      const reading =
+        ageMs < 3_600_000
+          ? `${Math.max(1, Math.round(ageMs / 60_000))} min ago`
+          : `${(ageMs / 3_600_000).toFixed(1)} h ago`;
       out.push({
         key: "signal_stale",
         severity: ageMs > 5 * 60_000 ? "critical" : "warning",
         label: "Signal",
-        reading: `${Math.round(ageMs / 1000)}s ago`,
+        reading,
         note: "no fresh readings from the patient device",
       });
     }
@@ -240,7 +253,7 @@ Rules you must follow:
 - Use ONLY the PATIENT, INSERTED RECORDS and LIVE SIGNALS sections below. Never invent a value, medication, diagnosis, allergy or history.
 - If the answer is not in the supplied material, say plainly that it is not in the record and name what to check in person.
 - You may report readings and whether they are outside the stated thresholds. Do not diagnose or prescribe.
-- Prefer short, spoken answers: 2-4 sentences (about 70 words) unless the nurse asks for detail.
+- Respect the requested ANSWER LENGTH. Otherwise prefer short, spoken answers of 2-4 sentences (about 70 words).
 - If a reading is critical, say what to check first.
 - Never claim to be a clinician or to have examined the patient.`;
 
@@ -256,26 +269,132 @@ interface PatientFacts {
   omitted: number;
 }
 
+function relTime(iso?: string | null): string {
+  if (!iso) return "at an unknown time";
+  const ms = Date.now() - Date.parse(iso);
+  if (!Number.isFinite(ms)) return "recently";
+  const mins = Math.round(ms / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"} ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+function listText(items: string[]): string {
+  if (!items.length) return "";
+  if (items.length === 1) return items[0];
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+/**
+ * The clinical facts, in prompt-ready form. `deep` keeps more of the
+ * time-series and the encounter history; the normal form stays compact.
+ */
+function clinicalLines(patient: ClinicalPatient, deep: boolean): string[] {
+  const activeConditions = patient.conditions.filter((c) => c.status === "active");
+  const historicalConditions = patient.conditions.filter((c) => c.status !== "active");
+  const activeMeds = patient.medications.filter((m) => m.status === "active");
+  const stoppedMeds = patient.medications.filter((m) => m.status !== "active");
+  const allergies = patient.allergies.map(
+    (a) => `${a.substance}${a.reaction ? ` (${a.reaction})` : ""}${a.severity ? `, ${a.severity}` : ""}`
+  );
+
+  const byLabel = new Map<string, typeof patient.observations>();
+  for (const o of patient.observations) {
+    const arr = byLabel.get(o.label) ?? [];
+    arr.push(o);
+    byLabel.set(o.label, arr);
+  }
+  const obs: string[] = [];
+  for (const [label, series] of byLabel) {
+    const sorted = [...series].sort((a, b) => a.at.localeCompare(b.at));
+    const shown = deep ? sorted.slice(-3) : sorted.slice(-1);
+    obs.push(
+      `${label} ${shown
+        .map((o) => `${o.value}${o.unit ? ` ${o.unit}` : ""} (${o.at.slice(0, 10)})`)
+        .join(" → ")}`
+    );
+  }
+
+  const encounters = [...patient.encounters]
+    .sort((a, b) => b.at.localeCompare(a.at))
+    .slice(0, deep ? 6 : 4)
+    .map((e) => `${e.at.slice(0, 10)} ${e.kind}${e.by ? ` by ${e.by}` : ""}: ${e.summary}`);
+
+  return [
+    activeConditions.length
+      ? `Active conditions: ${activeConditions
+          .map((c) => `${c.name}${c.code ? ` (${c.code})` : ""}${c.since ? ` since ${c.since}` : ""}`)
+          .join("; ")}`
+      : "Active conditions: none recorded",
+    historicalConditions.length
+      ? `Past conditions: ${historicalConditions
+          .map((c) => `${c.name} [${c.status}]${c.note ? ` — ${c.note}` : ""}`)
+          .join("; ")}`
+      : "",
+    activeMeds.length
+      ? `Active medications: ${activeMeds
+          .map(
+            (m) =>
+              `${m.name}${m.dose ? ` ${m.dose}` : ""}${m.route ? ` ${m.route}` : ""}${m.frequency ? ` ${m.frequency}` : ""}`
+          )
+          .join("; ")}`
+      : "Active medications: none recorded",
+    stoppedMeds.length
+      ? `Stopped medications: ${stoppedMeds
+          .map((m) => `${m.name}${m.dose ? ` ${m.dose}` : ""}${m.note ? ` — ${m.note}` : ""}`)
+          .join("; ")}`
+      : "",
+    allergies.length ? `Allergies: ${allergies.join("; ")}` : "Allergies: none recorded",
+    obs.length ? `Observations: ${obs.join("; ")}` : "Observations: none recorded",
+    encounters.length ? `Encounters: ${encounters.join(" | ")}` : "",
+    patient.carePlan ? `Care plan: ${patient.carePlan}` : "",
+  ].filter(Boolean);
+}
+
 function structured(patient: ClinicalPatient): string {
-  const conditions = patient.conditions.filter((c) => c.status === "active").map((c) => c.name);
-  const meds = patient.medications
-    .filter((m) => m.status === "active")
-    .map((m) => `${m.name}${m.dose ? ` ${m.dose}` : ""}${m.frequency ? ` ${m.frequency}` : ""}`);
-  const allergies = patient.allergies.map((a) => `${a.substance}${a.reaction ? ` (${a.reaction})` : ""}`);
-  const obs = patient.observations.slice(0, 6).map((o) => `${o.label} ${o.value}${o.unit ? ` ${o.unit}` : ""} (${o.at.slice(0, 10)})`);
   return [
     `Name: ${patient.displayName}${patient.age != null ? `, ${patient.age}` : ""}${patient.sex ? ` ${patient.sex}` : ""}`,
     patient.room ? `Location: ${patient.room}` : "",
     patient.primaryConcern ? `Primary concern: ${patient.primaryConcern}` : "",
-    conditions.length ? `Active conditions: ${conditions.join(", ")}` : "",
-    meds.length ? `Medications: ${meds.join("; ")}` : "",
-    allergies.length ? `Allergies: ${allergies.join("; ")}` : "",
-    patient.carePlan ? `Care plan: ${patient.carePlan}` : "",
-    obs.length ? `Recent observations: ${obs.join("; ")}` : "",
+    `Language: ${patient.language}`,
+    ...clinicalLines(patient, false),
     patient.synthetic ? "Note: this is synthetic demo data, not a real patient." : "",
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+/**
+ * A deterministic, record-grounded history answer. Used for deep history
+ * questions when no model is available, and as the fallback when a model call
+ * fails. It never adds facts the record does not contain.
+ */
+function historySummary(patient: ClinicalPatient, records: PatientRecord[], deep: boolean): string {
+  const who = `${patient.displayName} is ${patient.age != null ? `${patient.age} years old` : "of unknown age"}${
+    patient.sex ? `, ${patient.sex}` : ""
+  }${patient.room ? `, in ${patient.room}` : ""}.`;
+  const parts: string[] = [who];
+  if (patient.primaryConcern) parts.push(`Reason for care: ${patient.primaryConcern}.`);
+  parts.push(...clinicalLines(patient, true).map((line) => `${line}.`));
+  if (records.length) {
+    parts.push(
+      `Inserted records: ${records
+        .slice(0, deep ? 6 : 3)
+        .map((r) => `"${r.title}"${r.source ? ` (${r.source})` : ""}, ${r.createdAt.slice(0, 10)}`)
+        .join("; ")}.`
+    );
+    if (deep) {
+      for (const rec of records.slice(0, 3)) {
+        const excerpt = rec.text.replace(/\s+/g, " ").trim().slice(0, 420);
+        if (excerpt) parts.push(`${rec.title}: ${excerpt}`);
+      }
+    }
+  }
+  if (patient.synthetic) parts.push("This is synthetic demo data, not a real patient.");
+  return parts.join(" ");
 }
 
 function signalBlock(findings: SignalFinding[], metrics: PatientMetrics | null | undefined): string {
@@ -286,8 +405,9 @@ function signalBlock(findings: SignalFinding[], metrics: PatientMetrics | null |
     `Eye closure: ${metrics?.eyeClosureDuration != null ? `${(metrics.eyeClosureDuration / 1000).toFixed(1)}s` : "no reading"}`
   );
   lines.push(
-    `Movement: ${metrics?.movementActivity != null ? metrics.movementActivity.toFixed(2) : "no reading"}`
+    `Movement: ${metrics?.movementActivity != null ? `${Math.round(metrics.movementActivity * 100)}%` : "no reading"}`
   );
+  lines.push(`Last device reading: ${metrics?.lastSeen ? relTime(metrics.lastSeen) : "no reading yet"}`);
   if (findings.length) {
     lines.push(`Thresholds crossed: ${findings.map((f) => `${f.label} ${f.reading} (${f.note})`).join("; ")}`);
   } else {
@@ -312,7 +432,7 @@ export interface PortalContext {
   findings: SignalFinding[];
   worst: Severity;
   engine: { gemini: boolean; model: string };
-  patients: Array<{ id: string; displayName: string; room?: string }>;
+  patients: Array<{ id: string; displayName: string; room?: string; synthetic?: boolean }>;
   suggestedQuestions: string[];
 }
 
@@ -320,11 +440,19 @@ function suggestionsFor(patient: ClinicalPatient | null, findings: SignalFinding
   const name = patient?.displayName.split(" ")[0] ?? "the patient";
   const out: string[] = [];
   if (findings.length) out.push("Is this urgent? What should I check first?");
-  out.push(`What is ${name}'s history?`);
-  out.push(`What medications is ${name} on?`);
-  out.push("Summarise the inserted records");
-  out.push("What changed since the last observation?");
-  return out.slice(0, 5);
+  if (patient) {
+    out.push(`Give me ${name}'s full history`);
+    out.push(`What medications is ${name} on?`);
+    out.push(`Any allergies or safety concerns for ${name}?`);
+    out.push("What changed since the last observation?");
+    out.push("Summarise the inserted records");
+    out.push("Draft an SBAR handoff");
+  } else {
+    out.push("What are the live readings?");
+    out.push("Is anything urgent right now?");
+    out.push("What should I check first?");
+  }
+  return [...new Set(out)].slice(0, 6);
 }
 
 export async function buildPortalContext(sessionId: string): Promise<PortalContext> {
@@ -409,6 +537,183 @@ export async function unlinkPortalSession(sessionId: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// SBAR handoff
+// ---------------------------------------------------------------------------
+
+export type PortalDetail = "brief" | "standard" | "deep";
+
+export interface PortalChatTurn {
+  role: "nurse" | "assistant";
+  text: string;
+}
+
+export interface PortalSbar {
+  sessionId: string;
+  patientId: string;
+  patientName: string;
+  generatedAt: string;
+  synthetic: boolean;
+  situation: string;
+  background: string;
+  assessment: string;
+  recommendation: string;
+  text: string;
+}
+
+function sbarRecommendations(ctx: PortalContext): string[] {
+  const has = (key: string) => ctx.findings.some((f) => f.key === key);
+  const out: string[] = [];
+  if (has("sos")) out.push("Acknowledge the wearable SOS immediately and confirm the patient is safe.");
+  if (has("signal_stale"))
+    out.push("Check that the patient device is powered, connected and streaming, then verify the patient by phone or in person.");
+  if (has("low_alertness") || has("eye_closure"))
+    out.push(
+      "Reassess alertness and airway safety, check for hypoxia, sedation or another reversible cause, and escalate to the clinical team if it does not improve."
+    );
+  if (has("low_blink"))
+    out.push("Repeat the blink reading while the patient is awake and facing the camera, and confirm the finding with the clinical team.");
+  if (has("low_movement"))
+    out.push("Check whether the patient is resting, uncomfortable or unable to move, then review positioning and comfort.");
+  if (has("spo2")) out.push("Repeat the oxygen saturation with a well-positioned probe and follow the local oxygen-escalation protocol.");
+  if (has("heart_rate"))
+    out.push("Repeat the heart rate, check for pain, fever or dehydration, and escalate if it stays outside the threshold.");
+  if (has("temperature")) out.push("Confirm the temperature with a second measurement and screen for infection.");
+  if (!out.length)
+    out.push("Continue routine monitoring, repeat readings as scheduled and review the care plan at the next contact.");
+  return out;
+}
+
+/**
+ * Deterministic SBAR handoff built only from the stored record and live signal
+ * state. No model call, no invented diagnosis: Assessment is a threshold
+ * summary and Recommendation is a conservative checklist.
+ */
+export function buildSbar(ctx: PortalContext, records: PatientRecord[] = []): PortalSbar | null {
+  const patient = ctx.patient;
+  if (!patient) return null;
+
+  const who = `${patient.displayName}${patient.age != null ? `, ${patient.age}` : ""}${
+    patient.sex ? ` ${patient.sex}` : ""
+  }${patient.room ? `, ${patient.room}` : ""}`;
+  const findingsText = ctx.findings.length
+    ? `Live alerts: ${ctx.findings.map((f) => `${f.label} ${f.reading} (${f.note})`).join("; ")}.`
+    : "No live threshold breaches.";
+  const lastSeen = ctx.metrics?.lastSeen
+    ? `The last device reading was ${relTime(ctx.metrics.lastSeen)}.`
+    : "No device reading has arrived yet.";
+  const situation = [
+    `Situation: ${who}.`,
+    patient.primaryConcern ? `Primary concern: ${patient.primaryConcern}.` : "No primary concern recorded.",
+    `CareSpeak session ${ctx.sessionId}.`,
+    findingsText,
+    lastSeen,
+  ].join(" ");
+
+  const activeConditions = patient.conditions
+    .filter((c) => c.status === "active")
+    .map((c) => `${c.name}${c.code ? ` (${c.code})` : ""}`);
+  const pastConditions = patient.conditions
+    .filter((c) => c.status !== "active")
+    .map((c) => `${c.name} [${c.status}]`);
+  const activeMeds = patient.medications
+    .filter((m) => m.status === "active")
+    .map((m) => `${m.name}${m.dose ? ` ${m.dose}` : ""}${m.frequency ? ` ${m.frequency}` : ""}`);
+  const allergies = patient.allergies.map((a) => `${a.substance}${a.reaction ? ` (${a.reaction})` : ""}`);
+  const recentEncounters = [...patient.encounters]
+    .sort((a, b) => b.at.localeCompare(a.at))
+    .slice(0, 3)
+    .map((e) => `${e.at.slice(0, 10)} ${e.kind}: ${e.summary}`);
+  const recordTitles = records
+    .slice(0, 6)
+    .map((r) => `"${r.title}"${r.source ? ` (${r.source})` : ""}, ${r.createdAt.slice(0, 10)}`);
+
+  const background = [
+    `Background: ${activeConditions.length ? `Active conditions: ${activeConditions.join("; ")}.` : "No active conditions recorded."}`,
+    pastConditions.length ? `Past history: ${pastConditions.join("; ")}.` : "",
+    activeMeds.length ? `Medications: ${activeMeds.join("; ")}.` : "No active medications recorded.",
+    allergies.length ? `Allergies: ${allergies.join("; ")}.` : "No recorded allergies.",
+    patient.carePlan ? `Care plan: ${patient.carePlan}.` : "",
+    recentEncounters.length ? `Recent contact: ${recentEncounters.join(" | ")}.` : "",
+    recordTitles.length ? `Inserted records: ${recordTitles.join("; ")}.` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const byLabel = new Map<string, typeof patient.observations>();
+  for (const o of patient.observations) {
+    const arr = byLabel.get(o.label) ?? [];
+    arr.push(o);
+    byLabel.set(o.label, arr);
+  }
+  const trends: string[] = [];
+  for (const [label, series] of byLabel) {
+    const sorted = [...series].sort((a, b) => a.at.localeCompare(b.at));
+    const latest = sorted[sorted.length - 1];
+    const previous = sorted[sorted.length - 2];
+    if (
+      latest &&
+      previous &&
+      typeof latest.value === "number" &&
+      typeof previous.value === "number" &&
+      latest.value !== previous.value
+    ) {
+      trends.push(`${label} ${previous.value} → ${latest.value}${latest.unit ? ` ${latest.unit}` : ""}`);
+    } else if (latest) {
+      trends.push(`${label} ${latest.value}${latest.unit ? ` ${latest.unit}` : ""}`);
+    }
+  }
+  const liveReadings: string[] = [];
+  if (ctx.metrics?.alertnessScore != null) liveReadings.push(`alertness ${Math.round(ctx.metrics.alertnessScore)}%`);
+  if (ctx.metrics?.blinkRate != null) liveReadings.push(`blink rate ${ctx.metrics.blinkRate.toFixed(1)}/min`);
+  if (ctx.metrics?.eyeClosureDuration != null)
+    liveReadings.push(`eye closure ${(ctx.metrics.eyeClosureDuration / 1000).toFixed(1)} s`);
+  if (ctx.metrics?.movementActivity != null)
+    liveReadings.push(`movement ${Math.round(ctx.metrics.movementActivity * 100)}%`);
+  if (ctx.vitals?.spo2 != null) liveReadings.push(`SpO₂ ${Math.round(ctx.vitals.spo2)}%`);
+  if (ctx.vitals?.heartRate != null) liveReadings.push(`heart rate ${Math.round(ctx.vitals.heartRate)} bpm`);
+  if (ctx.vitals?.temperature != null) liveReadings.push(`temperature ${ctx.vitals.temperature.toFixed(1)} °C`);
+
+  const assessment = [
+    `Assessment: ${liveReadings.length ? `Live readings are ${liveReadings.join(", ")}.` : "No live readings are available."}`,
+    findingsText,
+    trends.length ? `Recorded trends: ${trends.slice(0, 6).join("; ")}.` : "",
+    "This is a threshold summary, not a diagnosis.",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const recommendation = `Recommendation: ${sbarRecommendations(ctx).join(" ")}`;
+
+  const text = [
+    `SBAR handoff — ${patient.displayName}${patient.synthetic ? " (synthetic demo data)" : ""}`,
+    situation,
+    background,
+    assessment,
+    recommendation,
+  ].join("\n\n");
+
+  return {
+    sessionId: ctx.sessionId,
+    patientId: patient.id,
+    patientName: patient.displayName,
+    generatedAt: new Date().toISOString(),
+    synthetic: patient.synthetic,
+    situation,
+    background,
+    assessment,
+    recommendation,
+    text,
+  };
+}
+
+export async function sbarPortal(sessionId: string): Promise<PortalSbar | null> {
+  const ctx = await buildPortalContext(sessionId);
+  if (!ctx.patient) return null;
+  const records = await listRecords(ctx.patient.id);
+  return buildSbar(ctx, records);
+}
+
+// ---------------------------------------------------------------------------
 // answering
 // ---------------------------------------------------------------------------
 
@@ -425,6 +730,8 @@ export interface PortalAnswer {
   intent?: string;
   /** Present when the request was a dictation ("send a message to ..."). */
   action?: PortalAction | null;
+  /** Suggested next questions, grounded in the current patient and readings. */
+  followUps?: string[];
 }
 
 /**
@@ -548,10 +855,40 @@ function searchRecords(question: string, records: PatientRecord[]): PatientRecor
 export async function askPortal(
   sessionId: string,
   rawQuestion: string,
-  opts: { voice?: boolean } = {}
+  opts: { voice?: boolean; detail?: PortalDetail; history?: Array<{ role?: string; text?: string }> } = {}
 ): Promise<PortalAnswer & { patientId: string | null }> {
+  const detail: PortalDetail =
+    opts.detail === "brief" || opts.detail === "deep" ? opts.detail : "standard";
+  const history: PortalChatTurn[] = (opts.history ?? [])
+    .filter((t): t is { role?: string; text?: string } => Boolean(t) && typeof t.text === "string")
+    .map((t) => ({
+      role: (t.role === "assistant" ? "assistant" : "nurse") as "assistant" | "nurse",
+      text: String(t.text).trim().slice(0, 600),
+    }))
+    .filter((t) => t.text.length > 0)
+    .slice(-8);
+
   const question = rawQuestion.trim().slice(0, 1000);
   const ctx = await buildPortalContext(sessionId);
+  const followUps = suggestionsFor(ctx.patient, ctx.findings).slice(0, 3);
+
+  const finish = (
+    answer: string,
+    engine: Engine,
+    model: string,
+    cached: boolean,
+    intent?: string,
+    action?: PortalAction | null
+  ): PortalAnswer & { patientId: string | null } => ({
+    answer,
+    engine,
+    model,
+    cached,
+    intent,
+    action: action ?? null,
+    followUps,
+    patientId: ctx.patient?.id ?? null,
+  });
 
   if (!ctx.patient) {
     const liveParts: string[] = [];
@@ -568,43 +905,29 @@ export async function askPortal(
         ? `${live} All monitored readings are inside their thresholds.`
         : live;
     if (!question) {
-      return {
-        answer: liveStatus,
-        engine: "rules",
-        model: "rules",
-        cached: false,
-        patientId: null,
-      };
+      return finish(liveStatus, "rules", "rules", false);
     }
     const q = question.toLowerCase();
     if (/blink|alertness|closure|movement|reading|vital|status|how is|how are/.test(q)) {
-      return {
-        answer: liveStatus,
-        engine: "rules",
-        model: "rules",
-        cached: false,
-        patientId: null,
-      };
+      return finish(liveStatus, "rules", "rules", false);
     }
-    return {
-      answer: `No patient is linked to this session yet, so I can only report the live readings: ${live} Link a patient in the nurse portal (or on this page) to use their history and records.`,
-      engine: "rules",
-      model: "rules",
-      cached: false,
-      patientId: null,
-    };
+    return finish(
+      `No patient is linked to this session yet, so I can only report the live readings: ${live} Link a patient in the nurse portal (or on this page) to use their history and records.`,
+      "rules",
+      "rules",
+      false
+    );
   }
 
   if (!question) {
-    return {
-      answer: ctx.findings.length
+    return finish(
+      ctx.findings.length
         ? `Watching ${ctx.patient.displayName}. ${ctx.findings.map((f) => `${f.label} ${f.reading}`).join(", ")}.`
         : `Watching ${ctx.patient.displayName}. All monitored readings are inside their thresholds right now.`,
-      engine: "rules",
-      model: "rules",
-      cached: false,
-      patientId: ctx.patient.id,
-    };
+      "rules",
+      "rules",
+      false
+    );
   }
 
   const patient = ctx.patient;
@@ -625,15 +948,21 @@ export async function askPortal(
         patientName: patient.displayName,
         text: dictation.text,
       },
+      followUps,
       patientId: patient.id,
     };
   }
 
   const records = await listRecords(patient.id);
+
+  const historyQ = isHistoryQuestion(question);
+
   const key = cacheKey([
     "answer",
     patient.id,
+    detail,
     question.toLowerCase(),
+    history.length ? historySignature(history) : "",
     records.map((r) => `${r.id}:${r.chars}`).join(","),
     metricsBucket(ctx.metrics),
     ctx.findings.map((f) => f.key).join(","),
@@ -641,17 +970,34 @@ export async function askPortal(
 
   const cached = await cacheGet(key);
   if (cached) {
-    return { answer: cached.text, engine: "gemini", model: cached.model, cached: true, patientId: patient.id };
+    return {
+      answer: cached.text,
+      engine: "gemini",
+      model: cached.model,
+      cached: true,
+      followUps,
+      patientId: patient.id,
+    };
   }
 
-  // 1. Exact structured answers first — free and never wrong.
-  const exact = rulesAnswer(question, patient);
+  // 1. Exact structured answers first — free and never wrong. History
+  //    questions skip this so they can use the richer history summary.
+  const exact = historyQ ? null : rulesAnswer(question, patient);
   if (exact) {
     await cachePut(key, exact.text, "rules");
-    return { answer: exact.text, engine: "rules", model: "rules", cached: false, intent: exact.intent, patientId: patient.id };
+    return {
+      answer: exact.text,
+      engine: "rules",
+      model: "rules",
+      cached: false,
+      intent: exact.intent,
+      followUps,
+      patientId: patient.id,
+    };
   }
 
-  // 2. Gemini for everything else, grounded on the same material.
+  // 2. Gemini for everything else, grounded on the same material. Conversation
+  //    history is included so follow-up questions ("and her allergies?") work.
   if (geminiConfigured()) {
     const recordBlock = await buildRecordContext(patient.id);
     const matched = searchRecords(question, records);
@@ -660,6 +1006,22 @@ export async function askPortal(
       .map((r) => `### ${r.title}${r.source ? ` (${r.source})` : ""}\n${r.text.slice(0, 4000)}`)
       .join("\n\n");
 
+    const conversationBlock =
+      history.length > 0
+        ? `CONVERSATION SO FAR\n${history
+            .map((t) => `${t.role === "assistant" ? "Assistant" : "Nurse"}: ${t.text}`)
+            .join("\n")}`
+        : "";
+
+    const depthLine =
+      detail === "brief"
+        ? "ANSWER LENGTH\nTwo sentences maximum. Lead with the direct answer."
+        : detail === "deep"
+          ? "ANSWER LENGTH\nBe thorough: 5-8 sentences. Use the relevant history, the most recent observations, inserted records and current live signals. Say which record you relied on. End with what the nurse should check or do next."
+          : opts.voice
+            ? "ANSWER LENGTH\n2-3 short sentences for speech."
+            : "ANSWER LENGTH\n3-5 sentences.";
+
     const prompt = [
       `PATIENT\n${structured(patient)}`,
       `INSERTED RECORDS${recordBlock.omitted ? ` (${recordBlock.omitted} older record(s) omitted for length)` : ""}\n${
@@ -667,7 +1029,9 @@ export async function askPortal(
       }`,
       matchedText ? `MOST RELEVANT RECORD EXCERPTS\n${matchedText}` : "",
       `LIVE SIGNALS\n${signalBlock(ctx.findings, ctx.metrics)}`,
-      opts.voice ? "MODE\nYou are speaking this answer aloud on the phone. Keep it to two short sentences." : "",
+      conversationBlock,
+      depthLine,
+      opts.voice && detail !== "deep" ? "MODE\nYou are speaking this answer aloud on the phone. Keep it concise." : "",
       `QUESTION\n${question}`,
     ]
       .filter(Boolean)
@@ -676,16 +1040,39 @@ export async function askPortal(
     const result = await geminiGenerate({
       system: ANSWER_SYSTEM,
       prompt,
-      maxTokens: opts.voice ? 220 : 400,
+      maxTokens: detail === "deep" ? 800 : opts.voice ? 260 : detail === "brief" ? 180 : 420,
       temperature: 0.2,
     });
     if (result) {
       await cachePut(key, result.text, result.model);
-      return { answer: result.text, engine: "gemini", model: result.model, cached: false, patientId: patient.id };
+      return {
+        answer: result.text,
+        engine: "gemini",
+        model: result.model,
+        cached: false,
+        intent: historyQ ? "history" : undefined,
+        followUps,
+        patientId: patient.id,
+      };
     }
   }
 
-  // 3. Honest local fallback: report what the record and signals actually say.
+  // 3. Honest local fallback. History questions get the full record-grounded
+  //    summary; otherwise report what the record and signals actually say.
+  if (historyQ) {
+    const answer = historySummary(patient, records, detail === "deep");
+    await cachePut(key, answer, "rules");
+    return {
+      answer,
+      engine: "rules",
+      model: "rules",
+      cached: false,
+      intent: "history",
+      followUps,
+      patientId: patient.id,
+    };
+  }
+
   const parts: string[] = [];
   if (ctx.findings.length) {
     parts.push(
@@ -706,16 +1093,32 @@ export async function askPortal(
     );
   } else {
     parts.push("I could not match that to an inserted document.");
-    // Give the deterministic read of the structured record rather than a
-    // content-free dead end. This is the same grounded summary the assistant
-    // uses elsewhere — no model, no invented values.
     const overview = answerQuestion(question, assistantContextFor(patient));
     if (overview.intent === "overview" && overview.answer) parts.push(overview.answer);
   }
   parts.push("Check the chart in person, or add the missing document on the Patient records page.");
   const answer = parts.join(" ");
   await cachePut(key, answer, "rules");
-  return { answer, engine: "rules", model: "rules", cached: false, patientId: patient.id };
+  return {
+    answer,
+    engine: "rules",
+    model: "rules",
+    cached: false,
+    followUps,
+    patientId: patient.id,
+  };
+}
+
+function isHistoryQuestion(question: string): boolean {
+  return /\b(history|background|summar(?:y|ise|ize)|overview|everything|profile|past|previous|records?)\b/i.test(question) &&
+    !/last\s+(call|session|conversation)\b/i.test(question);
+}
+
+function historySignature(history: PortalChatTurn[]): string {
+  return createHash("sha256")
+    .update(history.map((t) => `${t.role}:${t.text}`).join("\n"))
+    .digest("hex")
+    .slice(0, 16);
 }
 
 // ---------------------------------------------------------------------------
@@ -731,18 +1134,39 @@ export interface PortalAlert {
   findings: SignalFinding[];
 }
 
+/** Best-effort conversion of a "Signal" reading back into seconds. */
+function staleSeconds(reading: string): number | null {
+  const h = reading.match(/([\d.]+)\s*h/);
+  if (h) {
+    const n = Number(h[1]);
+    return Number.isFinite(n) ? Math.round(n * 3600) : null;
+  }
+  const m = reading.match(/([\d.]+)\s*min/);
+  if (m) {
+    const n = Number(m[1]);
+    return Number.isFinite(n) ? Math.round(n * 60) : null;
+  }
+  const s = reading.match(/([\d.]+)\s*s/);
+  if (s) {
+    const n = Number(s[1]);
+    return Number.isFinite(n) ? Math.round(n) : null;
+  }
+  return null;
+}
+
 /** Deterministic one-liner used when Gemini is unavailable. */
 export function rulesAlertLine(patient: ClinicalPatient | null, findings: SignalFinding[]): string {
   if (!findings.length) return "";
   const who = patient ? patient.displayName : "The patient";
   const worst = findings[0];
   if (worst.key === "signal_stale") {
-    const seconds = Number(worst.reading.replace(/[^0-9]/g, ""));
-    const duration = Number.isFinite(seconds) && seconds > 0
-      ? seconds >= 120
-        ? `${Math.round(seconds / 60)} minutes`
-        : `${seconds} seconds`
-      : worst.reading;
+    const seconds = staleSeconds(worst.reading);
+    const duration =
+      seconds != null && seconds > 0
+        ? seconds >= 120
+          ? `${Math.round(seconds / 60)} minutes`
+          : `${seconds} seconds`
+        : worst.reading;
     return `No fresh device readings for ${duration}. Please check the patient's device and the patient now.`;
   }
   const rest = findings.slice(1, 3).map((f) => `${f.label.toLowerCase()} ${f.reading}`);
@@ -769,8 +1193,8 @@ export async function alertPortal(
     ctx.findings
       .map((f) => {
         if (f.key === "signal_stale") {
-          const seconds = Number(f.reading.replace(/[^0-9]/g, ""));
-          const minutes = Number.isFinite(seconds) && seconds > 0 ? Math.max(1, Math.round(seconds / 60)) : 0;
+          const seconds = staleSeconds(f.reading);
+          const minutes = seconds != null && seconds > 0 ? Math.max(1, Math.round(seconds / 60)) : 0;
           return `${f.key}:${minutes}m`;
         }
         return `${f.key}:${f.reading}`;

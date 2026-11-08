@@ -4,6 +4,7 @@ import {
   alertPortal,
   askPortal,
   buildPortalContext,
+  buildSbar,
   linkPortalSession,
   metricsBucket,
   rulesAlertLine,
@@ -250,5 +251,36 @@ describe("portal context + answering", () => {
     const alert = await alertPortal("CALM01");
     expect(alert.line).toBe("");
     expect(alert.severity).toBe("ok");
+  });
+
+  it("builds an SBAR handoff from the record and live signals", async () => {
+    await linkPortalSession("SBAR01", "pt_0001");
+    const store = await getSessionStore();
+    await store.setMetrics("SBAR01", "cam1", { alertnessScore: 12, blinkRate: 1, movementActivity: 0.01 });
+    const ctx = await buildPortalContext("SBAR01");
+    const sbar = buildSbar(ctx, await listRecords("pt_0001"));
+    expect(sbar).not.toBeNull();
+    expect(sbar!.situation).toContain("Anita Sharma");
+    expect(sbar!.background).toContain("Heart failure");
+    expect(sbar!.assessment).toContain("threshold summary");
+    expect(sbar!.recommendation.length).toBeGreaterThan(0);
+    expect(sbar!.text).toContain("SBAR handoff");
+  });
+
+  it("answers history questions with the record-grounded summary", async () => {
+    await linkPortalSession("HIST01", "pt_0001");
+    const res = await askPortal("HIST01", "tell me the full history", { detail: "deep" });
+    expect(res.intent).toBe("history");
+    expect(res.answer).toContain("Furosemide");
+    expect(res.followUps?.length).toBeGreaterThan(0);
+  });
+
+  it("accepts conversation history without breaking", async () => {
+    await linkPortalSession("CONV01", "pt_0001");
+    const res = await askPortal("CONV01", "what about her allergies?", {
+      history: [{ role: "nurse", text: "What medications is she on?" }, { role: "assistant", text: "Furosemide." }],
+    });
+    expect(res.patientId).toBe("pt_0001");
+    expect(res.answer.length).toBeGreaterThan(0);
   });
 });

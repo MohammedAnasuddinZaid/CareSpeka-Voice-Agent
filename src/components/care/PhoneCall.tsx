@@ -18,6 +18,7 @@ import {
   Activity,
   AlertTriangle,
   CheckCircle2,
+  ClipboardCopy,
   Eye,
   Link2,
   Loader2,
@@ -37,11 +38,16 @@ import {
   carePortalBrief,
   carePortalContext,
   carePortalLink,
+  carePortalSbar,
   carePortalUnlink,
   type PortalContext,
+  type PortalSbar,
 } from "@/lib/careClient";
+import type { PortalDetail } from "@/lib/careClient";
 import { speak, speechSynthesisAvailable, stopSpeaking } from "@/lib/care/browserAI";
 import { getActiveCareSession, getSession, rememberCareSession } from "@/lib/session";
+import PatientSnapshot from "@/components/care/PatientSnapshot";
+import SbarCard from "@/components/care/SbarCard";
 
 // ---------------------------------------------------------------------------
 // browser speech recognition (optional, never assumed)
@@ -150,8 +156,19 @@ export default function BrowserCall({
   const [newPatientName, setNewPatientName] = useState("");
   const [newPatientConcern, setNewPatientConcern] = useState("");
   const [creatingPatient, setCreatingPatient] = useState(false);
-  const [showDemoPatients, setShowDemoPatients] = useState(false);
+  const [showDemoPatients, setShowDemoPatients] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // advanced options
+  const [detail, setDetail] = useState<PortalDetail>("standard");
+  const [sbar, setSbar] = useState<PortalSbar | null>(null);
+  const [sbarLoading, setSbarLoading] = useState(false);
+  const [sbarError, setSbarError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [followUps, setFollowUps] = useState<string[]>([]);
+
+  const turnsRef = useRef<Turn[]>([]);
+  turnsRef.current = turns;
 
   const pairRef = useRef<string | null>(pair);
   pairRef.current = activePair;
@@ -256,9 +273,18 @@ export default function BrowserCall({
       stopListening();
 
       try {
-        const res = await carePortalAsk(activeSessionId, question, pairRef.current);
+        const history: Array<{ role: "nurse" | "assistant"; text: string }> = turnsRef.current.slice(-8).map((t) => ({
+          role: t.role === "caller" ? "nurse" : "assistant",
+          text: t.text,
+        }));
+        const res = await carePortalAsk(activeSessionId, question, pairRef.current, {
+          voice: voiceOn,
+          detail,
+          history,
+        });
         append("agent", res.result.answer, res.result.engine);
         speakLine(res.result.answer);
+        setFollowUps(res.result.followUps ?? []);
       } catch (err) {
         const message =
           err instanceof CareApiError ? err.message : "The care agent could not answer. Try again.";
@@ -272,7 +298,7 @@ export default function BrowserCall({
         if (!speakingRef.current) resumeListening();
       }
     },
-    [activeSessionId, append, speakLine, stopListening, resumeListening]
+    [activeSessionId, append, detail, speakLine, stopListening, resumeListening, voiceOn]
   );
 
   askRef.current = ask;
@@ -500,6 +526,31 @@ export default function BrowserCall({
     (p) => showDemoPatients || !p.synthetic
   );
 
+  const generateSbar = useCallback(async () => {
+    if (!activeSessionId || !context?.patient || sbarLoading) return;
+    setSbarLoading(true);
+    setSbarError(null);
+    try {
+      const res = await carePortalSbar(activeSessionId, pairRef.current);
+      setSbar(res.sbar);
+    } catch (err) {
+      setSbarError(err instanceof CareApiError ? err.message : "Could not build the handoff.");
+    } finally {
+      setSbarLoading(false);
+    }
+  }, [activeSessionId, context?.patient, sbarLoading]);
+
+  const copyTranscript = useCallback(async () => {
+    const text = turnsRef.current.map((t) => `${t.role === "caller" ? "Nurse" : "Assistant"}: ${t.text}`).join("\n");
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setSendError("Could not copy the transcript. Your browser blocked clipboard access.");
+    }
+  }, []);
   const linkPatient = useCallback(async () => {
     if (!activeSessionId || !pickedPatient || linking) return;
     setLinking(true);
@@ -507,6 +558,9 @@ export default function BrowserCall({
     try {
       const res = await carePortalLink(activeSessionId, pickedPatient, pairRef.current);
       setContext(res.context);
+      setTurns([]);
+      setFollowUps([]);
+      setSbar(null);
       setPickedPatient(res.context.link?.patientId ?? pickedPatient);
     } catch (err) {
       setLinkError(err instanceof CareApiError ? err.message : "Could not link the patient.");
@@ -523,6 +577,9 @@ export default function BrowserCall({
       const res = await carePortalUnlink(activeSessionId, pairRef.current);
       setContext(res.context);
       setPickedPatient("");
+      setTurns([]);
+      setFollowUps([]);
+      setSbar(null);
     } catch (err) {
       setLinkError(err instanceof CareApiError ? err.message : "Could not unlink.");
     } finally {
@@ -546,6 +603,9 @@ export default function BrowserCall({
         const linked = await carePortalLink(activeSessionId, created.id, pairRef.current);
         setContext(linked.context);
         setPickedPatient(created.id);
+        setTurns([]);
+        setFollowUps([]);
+        setSbar(null);
         setNewPatientName("");
         setNewPatientConcern("");
         setShowAddPatient(false);
@@ -621,7 +681,7 @@ export default function BrowserCall({
               : { label: "On call", tone: "bg-slate-50 text-slate-600 border-slate-200" };
 
   const suggestions = patient
-    ? (context?.suggestedQuestions ?? []).slice(0, compact ? 2 : 3)
+    ? (followUps.length ? followUps : context?.suggestedQuestions ?? []).slice(0, compact ? 2 : 3)
     : ["What are the live readings?", "Is anything urgent right now?", "What should I check first?"].slice(
         0,
         compact ? 2 : 3
@@ -716,7 +776,7 @@ export default function BrowserCall({
               onClick={() => setShowPatientPicker((v) => !v)}
               className="text-[10px] font-semibold text-[#8a8a8a] hover:text-[#c63a22]"
             >
-              {showPatientPicker ? "Hide patient options" : "Link a patient (optional)"}
+              {showPatientPicker ? "Hide patient options" : patient ? "Switch patient" : "Link a patient (optional)"}
             </button>
           </div>
 
@@ -744,7 +804,7 @@ export default function BrowserCall({
                   className="inline-flex items-center gap-1 rounded-lg bg-[#c63a22] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#a92f1b] disabled:opacity-50"
                 >
                   {linking ? <Loader2 className="h-3 w-3 animate-spin" /> : <Link2 className="h-3 w-3" />}
-                  Link
+                  {patient ? "Switch" : "Link"}
                 </button>
                 <button
                   type="button"
@@ -821,6 +881,56 @@ export default function BrowserCall({
               </div>
             </details>
           ) : null}
+        </div>
+      ) : null}
+
+      {!loadError && !loading ? (
+        <div className="border-b border-[#f4efec] px-4 py-3 sm:px-5">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void generateSbar()}
+              disabled={!patient || sbarLoading || !activeSessionId}
+              className="inline-flex items-center gap-1 rounded-lg bg-[#c63a22] px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-[#a92f1b] disabled:opacity-50"
+            >
+              {sbarLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+              SBAR handoff
+            </button>
+            <button
+              type="button"
+              onClick={() => void copyTranscript()}
+              disabled={!turns.length}
+              className="inline-flex items-center gap-1 rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-[11px] font-semibold text-[#4b4b4b] hover:border-[#c63a22] hover:text-[#c63a22] disabled:opacity-50"
+            >
+              <ClipboardCopy className="h-3 w-3" /> {copied ? "Copied" : "Copy transcript"}
+            </button>
+            <label className="inline-flex items-center gap-1.5 text-[11px] text-[#6e6e6e]">
+              <span className="font-semibold">Depth</span>
+              <select
+                value={detail}
+                onChange={(e) => setDetail(e.target.value as PortalDetail)}
+                className="rounded-lg border border-[#e5e5e5] bg-white px-2 py-1 text-[11px] text-[#1f1f1f] outline-none focus:border-[#c63a22]"
+              >
+                <option value="brief">Brief</option>
+                <option value="standard">Standard</option>
+                <option value="deep">Deep history</option>
+              </select>
+            </label>
+          </div>
+          {sbarError ? (
+            <div className="mt-2 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] text-red-700">
+              <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" /> {sbarError}
+            </div>
+          ) : null}
+          {sbar ? <SbarCard sbar={sbar} onClose={() => setSbar(null)} /> : null}
+          <details className="mt-3 rounded-xl border border-[#ececec] bg-[#fbfaf9] p-3">
+            <summary className="cursor-pointer text-[11px] font-semibold text-[#6e6e6e] hover:text-[#c63a22]">
+              Chart snapshot &amp; history
+            </summary>
+            <div className="mt-3">
+              <PatientSnapshot patient={patient} records={context?.records ?? []} />
+            </div>
+          </details>
         </div>
       ) : null}
 
