@@ -249,8 +249,11 @@ async function cachePut(key: string, text: string, model: string): Promise<void>
 // ---------------------------------------------------------------------------
 
 const ANSWER_SYSTEM = `You are CareSpeak's nurse-portal assistant, speaking to a registered nurse who is monitoring a patient remotely.
+You are a careful, grounded clinical assistant, not a doctor.
 Rules you must follow:
 - Use ONLY the PATIENT, INSERTED RECORDS and LIVE SIGNALS sections below. Never invent a value, medication, diagnosis, allergy or history.
+- Think through the question step by step, then answer in the requested length.
+- When a question is vague, combine the patient profile, inserted records and live readings into one useful answer.
 - If the answer is not in the supplied material, say plainly that it is not in the record and name what to check in person.
 - You may report readings and whether they are outside the stated thresholds. Do not diagnose or prescribe.
 - Respect the requested ANSWER LENGTH. Otherwise prefer short, spoken answers of 2-4 sentences (about 70 words).
@@ -911,8 +914,24 @@ export async function askPortal(
     if (/blink|alertness|closure|movement|reading|vital|status|how is|how are/.test(q)) {
       return finish(liveStatus, "rules", "rules", false);
     }
+    if (/listen|hear|voice|audio|speak|talk/.test(q)) {
+      return finish(
+        `I am text-based, but I can speak my replies through your browser's voice when voice is turned on. Right now no patient is linked, so I can only report the live readings: ${live} Link a patient in the portal to use their history and records.`,
+        "rules",
+        "rules",
+        false
+      );
+    }
+    if (/patient|history|record|medic|allerg|condition/.test(q)) {
+      return finish(
+        `No patient is linked to this session yet, so I cannot open a chart. ${live} Use "Link a patient (optional)" above to attach a patient and then ask about their history, medications or records.`,
+        "rules",
+        "rules",
+        false
+      );
+    }
     return finish(
-      `No patient is linked to this session yet, so I can only report the live readings: ${live} Link a patient in the nurse portal (or on this page) to use their history and records.`,
+      `No patient is linked to this session yet. I can help with the live readings, patient history, medications, allergies, records and SBAR handoffs. ${live} Link a patient above for the full history. Voice replies work through your browser when voice is enabled.`,
       "rules",
       "rules",
       false
@@ -1073,30 +1092,37 @@ export async function askPortal(
     };
   }
 
+  const q = question.toLowerCase();
+  if (/listen|hear|voice|audio|speak|talk|can you/.test(q)) {
+    const answer = `Yes. I can answer questions about ${patient.displayName}, report the live readings, and speak my replies through your browser when voice is enabled. ${ctx.findings.length ? `Right now ${ctx.findings.map((f) => `${f.label} ${f.reading}`).join(", ")}.` : "All monitored readings are inside their thresholds right now."}`;
+    await cachePut(key, answer, "rules");
+    return { answer, engine: "rules", model: "rules", cached: false, followUps, patientId: patient.id };
+  }
+
   const parts: string[] = [];
   if (ctx.findings.length) {
-    parts.push(
-      `Live readings outside thresholds: ${ctx.findings
-        .map((f) => `${f.label} ${f.reading} (${f.note})`)
-        .join("; ")}.`
-    );
+    parts.push(`Attention needed: ${ctx.findings.map((f) => `${f.label} ${f.reading} (${f.note})`).join("; ")}.`);
+  } else if (ctx.metrics) {
+    parts.push("All monitored live readings are inside their thresholds right now.");
   } else {
-    parts.push("All monitored readings are inside their thresholds right now.");
+    parts.push("No live readings have arrived from the patient device yet.");
   }
-  const hits = searchRecords(question, records);
-  if (hits.length) {
-    parts.push(
-      `The inserted records that mention this are: ${hits
-        .slice(0, 2)
-        .map((r) => `"${r.title}" (${r.createdAt.slice(0, 10)})`)
-        .join(" and ")}.`
-    );
-  } else {
-    parts.push("I could not match that to an inserted document.");
-    const overview = answerQuestion(question, assistantContextFor(patient));
-    if (overview.intent === "overview" && overview.answer) parts.push(overview.answer);
-  }
-  parts.push("Check the chart in person, or add the missing document on the Patient records page.");
+  parts.push(
+    `${patient.displayName} is ${patient.age != null ? `${patient.age} years old` : "of unknown age"}${patient.sex ? `, ${patient.sex}` : ""}${patient.room ? `, in ${patient.room}` : ""}. Primary concern: ${patient.primaryConcern ?? "not recorded"}.`
+  );
+  const activeConditions = patient.conditions.filter((c) => c.status === "active").map((c) => c.name);
+  if (activeConditions.length) parts.push(`Active conditions: ${activeConditions.join(", ")}.`);
+  const activeMeds = patient.medications.filter((m) => m.status === "active");
+  if (activeMeds.length)
+    parts.push(`Medications: ${activeMeds.map((m) => `${m.name}${m.dose ? ` ${m.dose}` : ""}`).join(", ")}.`);
+  if (patient.allergies.length)
+    parts.push(`Allergies: ${patient.allergies.map((a) => `${a.substance} (${a.severity})`).join(", ")}.`);
+  if (patient.carePlan) parts.push(`Care plan: ${patient.carePlan}.`);
+  const obs = patient.observations.slice(-3).map((o) => `${o.label} ${o.value}${o.unit ? ` ${o.unit}` : ""}`);
+  if (obs.length) parts.push(`Recent observations: ${obs.join("; ")}.`);
+  if (records.length)
+    parts.push(`Inserted records: ${records.slice(0, 3).map((r) => `"${r.title}"`).join(", ")}.`);
+  parts.push("Ask for the full history, medications, allergies, records, or an SBAR handoff for more detail.");
   const answer = parts.join(" ");
   await cachePut(key, answer, "rules");
   return {

@@ -885,53 +885,58 @@ export default function BrowserCall({
       ) : null}
 
       {!loadError && !loading ? (
-        <div className="border-b border-[#f4efec] px-4 py-3 sm:px-5">
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void generateSbar()}
-              disabled={!patient || sbarLoading || !activeSessionId}
-              className="inline-flex items-center gap-1 rounded-lg bg-[#c63a22] px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-[#a92f1b] disabled:opacity-50"
-            >
-              {sbarLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-              SBAR handoff
-            </button>
-            <button
-              type="button"
-              onClick={() => void copyTranscript()}
-              disabled={!turns.length}
-              className="inline-flex items-center gap-1 rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-[11px] font-semibold text-[#4b4b4b] hover:border-[#c63a22] hover:text-[#c63a22] disabled:opacity-50"
-            >
-              <ClipboardCopy className="h-3 w-3" /> {copied ? "Copied" : "Copy transcript"}
-            </button>
-            <label className="inline-flex items-center gap-1.5 text-[11px] text-[#6e6e6e]">
-              <span className="font-semibold">Depth</span>
-              <select
-                value={detail}
-                onChange={(e) => setDetail(e.target.value as PortalDetail)}
-                className="rounded-lg border border-[#e5e5e5] bg-white px-2 py-1 text-[11px] text-[#1f1f1f] outline-none focus:border-[#c63a22]"
+        <details className="border-b border-[#f4efec] px-4 py-3 sm:px-5">
+          <summary className="cursor-pointer text-[11px] font-semibold text-[#6e6e6e] hover:text-[#c63a22]">
+            Advanced options (SBAR, chart, transcript, depth)
+          </summary>
+          <div className="mt-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void generateSbar()}
+                disabled={!patient || sbarLoading || !activeSessionId}
+                className="inline-flex items-center gap-1 rounded-lg bg-[#c63a22] px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-[#a92f1b] disabled:opacity-50"
               >
-                <option value="brief">Brief</option>
-                <option value="standard">Standard</option>
-                <option value="deep">Deep history</option>
-              </select>
-            </label>
+                {sbarLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                SBAR handoff
+              </button>
+              <button
+                type="button"
+                onClick={() => void copyTranscript()}
+                disabled={!turns.length}
+                className="inline-flex items-center gap-1 rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-[11px] font-semibold text-[#4b4b4b] hover:border-[#c63a22] hover:text-[#c63a22] disabled:opacity-50"
+              >
+                <ClipboardCopy className="h-3 w-3" /> {copied ? "Copied" : "Copy transcript"}
+              </button>
+              <label className="inline-flex items-center gap-1.5 text-[11px] text-[#6e6e6e]">
+                <span className="font-semibold">Depth</span>
+                <select
+                  value={detail}
+                  onChange={(e) => setDetail(e.target.value as PortalDetail)}
+                  className="rounded-lg border border-[#e5e5e5] bg-white px-2 py-1 text-[11px] text-[#1f1f1f] outline-none focus:border-[#c63a22]"
+                >
+                  <option value="brief">Brief</option>
+                  <option value="standard">Standard</option>
+                  <option value="deep">Deep history</option>
+                </select>
+              </label>
+            </div>
+            {sbarError ? (
+              <div className="mt-2 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] text-red-700">
+                <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" /> {sbarError}
+              </div>
+            ) : null}
+            {sbar ? <SbarCard sbar={sbar} onClose={() => setSbar(null)} /> : null}
+            <details className="mt-3 rounded-xl border border-[#ececec] bg-[#fbfaf9] p-3">
+              <summary className="cursor-pointer text-[11px] font-semibold text-[#6e6e6e] hover:text-[#c63a22]">
+                Chart snapshot &amp; history
+              </summary>
+              <div className="mt-3">
+                <PatientSnapshot patient={patient} records={context?.records ?? []} />
+              </div>
+            </details>
           </div>
-          {sbarError ? (
-            <div className="mt-2 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] text-red-700">
-              <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" /> {sbarError}
-            </div>
-          ) : null}
-          {sbar ? <SbarCard sbar={sbar} onClose={() => setSbar(null)} /> : null}
-          <details className="mt-3 rounded-xl border border-[#ececec] bg-[#fbfaf9] p-3">
-            <summary className="cursor-pointer text-[11px] font-semibold text-[#6e6e6e] hover:text-[#c63a22]">
-              Chart snapshot &amp; history
-            </summary>
-            <div className="mt-3">
-              <PatientSnapshot patient={patient} records={context?.records ?? []} />
-            </div>
-          </details>
-        </div>
+        </details>
       ) : null}
 
       {loadError ? (

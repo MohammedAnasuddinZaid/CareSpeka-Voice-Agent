@@ -242,21 +242,82 @@ export function speechSynthesisAvailable(): boolean {
   return typeof window !== "undefined" && "speechSynthesis" in window;
 }
 
+const PREFERRED_VOICES = [
+  "Google UK English Female",
+  "Microsoft Zira Desktop - English (United States)",
+  "Microsoft Zira - English (United States)",
+  "Samantha",
+  "Karen",
+  "Moira",
+  "Tessa",
+  "Fiona",
+];
+
+function pickVoice(): SpeechSynthesisVoice | null {
+  if (!speechSynthesisAvailable()) return null;
+  const voices = window.speechSynthesis.getVoices();
+  if (!voices.length) return null;
+  for (const name of PREFERRED_VOICES) {
+    const match = voices.find((v) => v.name === name);
+    if (match) return match;
+  }
+  return (
+    voices.find((v) => /^en[-_]/i.test(v.lang) && /female|woman/i.test(v.name)) ||
+    voices.find((v) => /^en[-_]/i.test(v.lang)) ||
+    voices[0] ||
+    null
+  );
+}
+
 export function speak(text: string, opts: { onStart?: () => void; onEnd?: () => void } = {}): () => void {
-  if (!speechSynthesisAvailable()) {
+  if (!speechSynthesisAvailable() || !text.trim()) {
     opts.onEnd?.();
     return () => undefined;
   }
-  const utter = new SpeechSynthesisUtterance(text);
-  utter.lang = "en-US";
-  utter.rate = 1;
-  utter.pitch = 1;
-  utter.onstart = () => opts.onStart?.();
-  utter.onend = () => opts.onEnd?.();
-  utter.onerror = () => opts.onEnd?.();
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(utter);
-  return () => window.speechSynthesis.cancel();
+
+  const run = () => {
+    try {
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.resume();
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.lang = "en-US";
+      utter.rate = 0.92;
+      utter.pitch = 1.0;
+      utter.volume = 1.0;
+      const voice = pickVoice();
+      if (voice) utter.voice = voice;
+      utter.onstart = () => opts.onStart?.();
+      utter.onend = () => opts.onEnd?.();
+      utter.onerror = () => opts.onEnd?.();
+      window.speechSynthesis.speak(utter);
+    } catch {
+      opts.onEnd?.();
+    }
+  };
+
+  // Some browsers (notably Chrome) populate the voice list asynchronously and
+  // need a short delay after cancel() before a new utterance will play.
+  if (window.speechSynthesis.getVoices().length === 0) {
+    const onVoices = () => {
+      window.speechSynthesis.removeEventListener("voiceschanged", onVoices);
+      window.setTimeout(run, 60);
+    };
+    window.speechSynthesis.addEventListener("voiceschanged", onVoices);
+    window.setTimeout(() => {
+      window.speechSynthesis.removeEventListener("voiceschanged", onVoices);
+      run();
+    }, 250);
+  } else {
+    window.setTimeout(run, 40);
+  }
+
+  return () => {
+    try {
+      window.speechSynthesis.cancel();
+    } catch {
+      /* ignore */
+    }
+  };
 }
 
 export function stopSpeaking(): void {
