@@ -355,7 +355,7 @@ export default function NurseViewPage() {
       if (!session) return;
 
       /* ── 1) escalation rules ── */
-      const decisions = evaluateEscalations(snapshot, metrics, now);
+      const decisions = evaluateEscalations(snapshot, metrics, now).filter((d) => d.rule !== "prolonged_inactivity");
       if (decisions.length > 0) {
         const byId = new Map(decisions.map((d) => [d.entryId, d]));
 

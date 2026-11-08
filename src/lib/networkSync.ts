@@ -14,13 +14,13 @@ import {
 } from "./outbox";
 
 const BROADCAST_CHANNEL = "carespeak_sync";
-const POLL_INTERVAL_MS = 1500;
-const MAX_POLL_INTERVAL_MS = 15000;
-const SSE_GRACE_MS = 6000;
+const POLL_INTERVAL_MS = 500;
+const MAX_POLL_INTERVAL_MS = 8000;
+const SSE_GRACE_MS = 3000;
 /** While SSE is connected we still reconcile via REST every 2s. Critical on
  *  serverless (Vercel): /api/stream and /api/sync may run on different lambda
  *  instances, so SSE alone can miss writes unless Upstash Redis is configured. */
-const RECONCILE_INTERVAL_MS = 2000;
+const RECONCILE_INTERVAL_MS = 500;
 
 export type ConnStatus = "connected" | "reconnecting" | "disconnected";
 export type Transport = "sse" | "poll" | "offline" | "none";
