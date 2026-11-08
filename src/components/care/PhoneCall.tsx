@@ -93,7 +93,7 @@ function liveSummary(ctx: PortalContext | null): string {
   const blink = reading(m?.blinkRate, " per minute", 1);
   const alertness = reading(m?.alertnessScore, "%");
   const closure = reading(m?.eyeClosureDuration != null ? m.eyeClosureDuration / 1000 : undefined, " seconds", 1);
-  const movement = reading(m?.movementActivity, "%");
+  const movement = reading(m?.movementActivity != null ? m.movementActivity * 100 : undefined, "%");
   if (blink) parts.push(`blink rate ${blink}`);
   if (alertness) parts.push(`alertness ${alertness}`);
   if (closure) parts.push(`eye closure ${closure}`);
@@ -336,10 +336,12 @@ export default function BrowserCall({
   useEffect(() => {
     const fromUrl = normalizeSessionId(sessionId);
     if (fromUrl) {
+      const active = getActiveCareSession();
+      const resolvedPair = pair ?? (active?.sessionId === fromUrl ? active.pair : null);
       setActiveSessionId(fromUrl);
-      setActivePair(pair ?? null);
+      setActivePair(resolvedPair);
       setSessionReady(true);
-      rememberCareSession(fromUrl, pair);
+      rememberCareSession(fromUrl, resolvedPair);
       return;
     }
 
@@ -531,7 +533,7 @@ export default function BrowserCall({
   const addPatient = useCallback(
     async (e: FormEvent) => {
       e.preventDefault();
-      if (!newPatientName.trim() || creatingPatient) return;
+      if (!newPatientName.trim() || creatingPatient || !activeSessionId) return;
       setCreatingPatient(true);
       setLinkError(null);
       try {
@@ -598,7 +600,7 @@ export default function BrowserCall({
       value: reading(metrics?.eyeClosureDuration != null ? metrics.eyeClosureDuration / 1000 : undefined, "s", 1),
       icon: Eye,
     },
-    { label: "Movement", value: reading(metrics?.movementActivity, "%"), icon: Waves },
+    { label: "Movement", value: reading(metrics?.movementActivity != null ? metrics.movementActivity * 100 : undefined, "%"), icon: Waves },
   ].filter((c) => c.value);
 
   const findings = context?.findings ?? [];
@@ -607,7 +609,7 @@ export default function BrowserCall({
   const status = loadError
     ? { label: "Link problem", tone: "bg-red-50 text-red-700 border-red-200" }
     : loading
-      ? { label: "Loading patient", tone: "bg-slate-50 text-slate-600 border-slate-200" }
+      ? { label: "Loading session", tone: "bg-slate-50 text-slate-600 border-slate-200" }
       : !started
         ? { label: "Ready to call", tone: "bg-emerald-50 text-emerald-700 border-emerald-200" }
         : speaking

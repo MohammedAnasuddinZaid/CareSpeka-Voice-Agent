@@ -673,6 +673,7 @@ export async function linkSessionToPatient(
   };
   const d = await getDriver();
   await d.setDoc(K.sessionLink(sessionId), link);
+  await d.del(K.sessionUnlinked(sessionId));
   return link;
 }
 
@@ -684,4 +685,5 @@ export async function getSessionLink(sessionId: string): Promise<SessionPatientL
 export async function unlinkSessionPatient(sessionId: string): Promise<void> {
   const d = await getDriver();
   await d.del(K.sessionLink(sessionId));
+  await d.setDoc(K.sessionUnlinked(sessionId), true);
 }

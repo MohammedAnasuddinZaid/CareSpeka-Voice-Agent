@@ -262,6 +262,7 @@ const K = {
   record: (id: string) => `care:record:${id}`,
   recordIndex: "care:records",
   sessionLink: (session: string) => `care:sessionlink:${session}`,
+  sessionUnlinked: (session: string) => `care:sessionunlinked:${session}`,
   aiCache: (hash: string) => `care:ai:cache:${hash}`,
   aiCacheIndex: "care:ai:cache:index",
   seed: "care:seed:v1",

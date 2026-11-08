@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { GestureLogEntry, NurseReply, ESCALATION_RULES } from "@/types";
 import { getSession, setSessionId, clearSession, rememberCareSession } from "@/lib/session";
+import { newestMetrics, newestVitals } from "@/lib/liveMetrics";
 import { useLiveSync } from "@/hooks/useLiveSync";
 import { evaluateEscalations } from "@/lib/escalation";
 import { isAlarmMuted, setAlarmMuted, startAlarm, stopAlarm } from "@/lib/nurseAlarm";
@@ -168,7 +169,7 @@ export default function NurseViewPage() {
 
   /* ── automatic escalation engine (implements ESCALATION_RULES for real) ── */
   const primaryMetrics = useMemo(
-    () => Object.values(remoteMetrics)[0] ?? null,
+    () => newestMetrics(remoteMetrics),
     [remoteMetrics]
   );
   logRef.current = log;
@@ -318,7 +319,7 @@ export default function NurseViewPage() {
     }
   }, [log, filter]);
 
-  const primaryVitals = useMemo(() => Object.values(vitals)[0] ?? null, [vitals]);
+  const primaryVitals = useMemo(() => newestVitals(vitals), [vitals]);
 
   /* ── predictive deterioration trajectory (Holt projection) ── */
   const vitalSamplesRef = useRef<VitalSample[]>([]);

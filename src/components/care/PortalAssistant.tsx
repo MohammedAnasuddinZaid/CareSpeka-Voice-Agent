@@ -51,7 +51,7 @@ import {
   type PortalSeverity,
 } from "@/lib/careClient";
 import { speak, speechSynthesisAvailable, stopSpeaking } from "@/lib/care/browserAI";
-import { rememberCareSession } from "@/lib/session";
+import { getActiveCareSession, rememberCareSession } from "@/lib/session";
 import FreeCallPanel from "@/components/care/FreeCallPanel";
 
 // ---------------------------------------------------------------------------
@@ -166,8 +166,12 @@ export default function PortalAssistant({
   const resolvedPair = useMemo(() => {
     if (pair) return pair;
     if (typeof window === "undefined") return null;
-    return new URLSearchParams(window.location.search).get("pair");
-  }, [pair]);
+    const fromUrl = new URLSearchParams(window.location.search).get("pair");
+    if (fromUrl) return fromUrl;
+    const active = getActiveCareSession();
+    if (active?.sessionId === sessionId) return active.pair;
+    return null;
+  }, [pair, sessionId]);
 
   const pairRef = useRef<string | null>(resolvedPair);
   pairRef.current = resolvedPair;
@@ -187,8 +191,15 @@ export default function PortalAssistant({
   voiceRef.current = voiceOn;
   const ttsAvailable = useMemo(() => speechSynthesisAvailable(), []);
   const callingRef = useRef(false);
+  const contextReqRef = useRef(0);
   const hasPatientRef = useRef(false);
   hasPatientRef.current = Boolean(context?.patient);
+
+  // Reset per-session memory when the session changes.
+  useEffect(() => {
+    briefedRef.current = null;
+    lastSigRef.current = "";
+  }, [sessionId]);
 
   const speakLine = useCallback((line: string) => {
     if (!voiceRef.current || !line) return;
@@ -238,21 +249,25 @@ export default function PortalAssistant({
         setContext(null);
         return null;
       }
+      const reqId = ++contextReqRef.current;
       if (!quiet) setLoadingContext(true);
       setContextError(null);
       try {
         const res = await carePortalContext(sessionId, pairRef.current);
+        if (reqId !== contextReqRef.current) return null;
         setContext(res.context);
-        if (!pickedPatient && res.context.link) setPickedPatient(res.context.link.patientId);
+        const linkedPatientId = res.context.link?.patientId;
+        if (linkedPatientId) setPickedPatient((prev) => prev || linkedPatientId);
         return res.context;
       } catch (err) {
+        if (reqId !== contextReqRef.current) return null;
         setContextError(err instanceof CareApiError ? err.message : "Could not reach the care store.");
         return null;
       } finally {
-        setLoadingContext(false);
+        if (reqId === contextReqRef.current) setLoadingContext(false);
       }
     },
-    [pickedPatient, sessionId]
+    [sessionId]
   );
 
   useEffect(() => {
@@ -305,7 +320,7 @@ export default function PortalAssistant({
           lastSigRef.current = "";
         } else {
           const sig = alert.findings
-            .map((f) => `${f.key}:${f.reading}`)
+            .map((f) => (f.key === "signal_stale" ? `${f.key}:${f.severity}` : `${f.key}:${f.reading}`))
             .sort()
             .join("|");
           const passes = RANK[alert.severity] >= RANK[severityFloor === "all" ? "watch" : severityFloor];
@@ -1005,5 +1020,5 @@ function fmtSeconds(ms: number | undefined): string {
 }
 
 function fmtMovement(n: number | undefined): string {
-  return n == null || !Number.isFinite(n) ? "—" : n.toFixed(2);
+  return n == null || !Number.isFinite(n) ? "—" : `${Math.round(n * 100)}%`;
 }

@@ -43,8 +43,10 @@ export default function FreeCallPanel({
   // bare browser-call surface), reuse the session the nurse portal paired with.
   useEffect(() => {
     const active = getActiveCareSession();
-    setResolvedSession(sessionId ?? active?.sessionId ?? null);
-    setResolvedPair(pair ?? active?.pair ?? null);
+    const session = sessionId ?? active?.sessionId ?? null;
+    const activePair = active && active.sessionId === session ? active.pair : null;
+    setResolvedSession(session);
+    setResolvedPair(pair ?? activePair ?? null);
   }, [pair, sessionId]);
 
   useEffect(() => {

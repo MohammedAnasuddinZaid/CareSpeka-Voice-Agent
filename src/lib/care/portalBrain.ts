@@ -18,6 +18,7 @@
 import { createHash } from "node:crypto";
 import type { DeviceVitals, PatientMetrics } from "@/types";
 import { getSessionStore } from "@/lib/server/store";
+import { newestMetrics, newestVitals } from "@/lib/liveMetrics";
 import { CareKeys as K, getDriver } from "./store";
 import {
   addMessage,
@@ -328,19 +329,21 @@ function suggestionsFor(patient: ClinicalPatient | null, findings: SignalFinding
 
 export async function buildPortalContext(sessionId: string): Promise<PortalContext> {
   const store = await getSessionStore();
-  const [storedLink, session, metricsMap, vitalsMap, patients] = await Promise.all([
+  const d = await getDriver();
+  const [storedLink, session, metricsMap, vitalsMap, patients, unlinked] = await Promise.all([
     getSessionLink(sessionId).catch(() => null),
     getSessionLoose(sessionId).catch(() => null),
     store.getMetrics(sessionId).catch(() => ({})),
     store.getVitals(sessionId).catch(() => ({})),
     listPatients().catch(() => [] as ClinicalPatient[]),
+    d.getDoc(K.sessionUnlinked(sessionId)).catch(() => null),
   ]);
 
   // A session is created for a specific patient. Use that patient until the
   // nurse explicitly re-links the session in the portal, so the assistant can
   // brief the caller immediately after the QR is scanned.
   let link: SessionPatientLink | null = storedLink;
-  if (!link && session?.patientId) {
+  if (!unlinked && !link && session?.patientId) {
     link = {
       sessionId,
       patientId: session.patientId,
@@ -349,7 +352,7 @@ export async function buildPortalContext(sessionId: string): Promise<PortalConte
     };
   }
   // auto-link only to real (non-synthetic) patients; demo patients stay optional
-  if (!link && !session) {
+  if (!unlinked && !link && !session) {
     const realPatients = patients.filter((p) => !p.synthetic);
     if (realPatients.length === 1) {
       link = {
@@ -362,8 +365,8 @@ export async function buildPortalContext(sessionId: string): Promise<PortalConte
     }
   }
 
-  const metrics = Object.values(metricsMap)[0] ?? null;
-  const vitals = Object.values(vitalsMap)[0] ?? null;
+  const metrics = newestMetrics(metricsMap);
+  const vitals = newestVitals(vitalsMap);
   const findings = analyzeSignals(metrics, vitals);
   const patient = link ? await getPatient(link.patientId) : null;
   const records = link ? await listRecords(link.patientId) : [];
@@ -555,7 +558,7 @@ export async function askPortal(
     if (ctx.metrics?.alertnessScore != null) liveParts.push(`alertness ${Math.round(ctx.metrics.alertnessScore)}%`);
     if (ctx.metrics?.blinkRate != null) liveParts.push(`blink rate ${ctx.metrics.blinkRate.toFixed(1)} per minute`);
     if (ctx.metrics?.eyeClosureDuration != null) liveParts.push(`eye closure ${(ctx.metrics.eyeClosureDuration / 1000).toFixed(1)} seconds`);
-    if (ctx.metrics?.movementActivity != null) liveParts.push(`movement ${ctx.metrics.movementActivity.toFixed(2)}`);
+    if (ctx.metrics?.movementActivity != null) liveParts.push(`movement ${Math.round(ctx.metrics.movementActivity * 100)}%`);
     const live = liveParts.length
       ? `Live readings: ${liveParts.join(", ")}.`
       : "No live readings are arriving from this session yet.";
@@ -763,7 +766,16 @@ export async function alertPortal(
   const key = cacheKey([
     "alert",
     ctx.patientId,
-    ctx.findings.map((f) => `${f.key}:${f.reading}`).join("|"),
+    ctx.findings
+      .map((f) => {
+        if (f.key === "signal_stale") {
+          const seconds = Number(f.reading.replace(/[^0-9]/g, ""));
+          const minutes = Number.isFinite(seconds) && seconds > 0 ? Math.max(1, Math.round(seconds / 60)) : 0;
+          return `${f.key}:${minutes}m`;
+        }
+        return `${f.key}:${f.reading}`;
+      })
+      .join("|"),
     metricsBucket(ctx.metrics),
   ]);
 
@@ -800,7 +812,7 @@ export async function portalBriefing(sessionId: string): Promise<{ line: string;
     if (ctx.metrics?.alertnessScore != null) liveParts.push(`alertness ${Math.round(ctx.metrics.alertnessScore)}%`);
     if (ctx.metrics?.blinkRate != null) liveParts.push(`blink rate ${ctx.metrics.blinkRate.toFixed(1)} per minute`);
     if (ctx.metrics?.eyeClosureDuration != null) liveParts.push(`eye closure ${(ctx.metrics.eyeClosureDuration / 1000).toFixed(1)} seconds`);
-    if (ctx.metrics?.movementActivity != null) liveParts.push(`movement ${ctx.metrics.movementActivity.toFixed(2)}`);
+    if (ctx.metrics?.movementActivity != null) liveParts.push(`movement ${Math.round(ctx.metrics.movementActivity * 100)}%`);
     const live = liveParts.length
       ? `Live readings right now: ${liveParts.join(", ")}.`
       : "No live readings yet from this session. Make sure the patient device is streaming.";

@@ -74,6 +74,7 @@ export function clearSession(): void {
   if (typeof window === "undefined") return;
   try {
     localStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(ACTIVE_CARE_KEY);
   } catch {}
 }
 
@@ -106,7 +107,21 @@ export function rememberCareSession(sessionId: string, pair?: string | null): vo
   const clean = sessionId.trim().toUpperCase();
   if (!/^[A-Z0-9_-]{3,32}$/.test(clean)) return;
   try {
-    const value: ActiveCareSession = { sessionId: clean, pair: pair?.trim() || null, at: Date.now() };
+    // Preserve a previously-known pair for the same session when the caller did not
+    // supply one, so a bare ?session= link cannot wipe out the QR pair token.
+    let nextPair = pair?.trim() || null;
+    if (!nextPair) {
+      try {
+        const raw = localStorage.getItem(ACTIVE_CARE_KEY);
+        if (raw) {
+          const prev = JSON.parse(raw) as ActiveCareSession;
+          if (prev?.sessionId?.trim().toUpperCase() === clean && prev.pair) {
+            nextPair = prev.pair.trim() || null;
+          }
+        }
+      } catch {}
+    }
+    const value: ActiveCareSession = { sessionId: clean, pair: nextPair, at: Date.now() };
     localStorage.setItem(ACTIVE_CARE_KEY, JSON.stringify(value));
   } catch {}
 }

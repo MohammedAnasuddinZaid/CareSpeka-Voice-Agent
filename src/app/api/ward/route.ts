@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSessionStore } from "@/lib/server/store";
+import { newestMetrics, newestVitals } from "@/lib/liveMetrics";
 import { getPairSummary } from "@/lib/server/pairing";
 
 export const dynamic = "force-dynamic";
@@ -42,11 +43,11 @@ export async function GET(): Promise<NextResponse> {
             unacknowledged: entries.filter((e) => e.status === "none").length,
             escalated: entries.filter((e) => e.status === "escalate").length,
             today: entries.filter((e) => (e.serverTime ?? e.timestamp) >= todayStart.getTime()).length,
-            alertness: Object.values(metrics)[0]?.alertnessScore ?? null,
-            movement: Object.values(metrics)[0]?.movementActivity ?? null,
-            heartRate: Object.values(vitals)[0]?.heartRate ?? null,
-            spo2: Object.values(vitals)[0]?.spo2 ?? null,
-            sosActive: !!Object.values(vitals)[0]?.sosActive,
+            alertness: newestMetrics(metrics)?.alertnessScore ?? null,
+            movement: newestMetrics(metrics)?.movementActivity ?? null,
+            heartRate: newestVitals(vitals)?.heartRate ?? null,
+            spo2: newestVitals(vitals)?.spo2 ?? null,
+            sosActive: !!newestVitals(vitals)?.sosActive,
             linkedDevices: pairing.linkedDevices,
             lastScanAt: pairing.lastScanAt,
             lastScanIp: pairing.lastScanIp,
