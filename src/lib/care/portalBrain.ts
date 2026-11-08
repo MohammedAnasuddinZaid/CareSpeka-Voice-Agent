@@ -378,7 +378,7 @@ function historySummary(patient: ClinicalPatient, records: PatientRecord[], deep
   }${patient.room ? `, in ${patient.room}` : ""}.`;
   const parts: string[] = [who];
   if (patient.primaryConcern) parts.push(`Reason for care: ${patient.primaryConcern}.`);
-  parts.push(...clinicalLines(patient, true).map((line) => `${line}.`));
+  parts.push(...clinicalLines(patient, true).map((line) => (line.endsWith(".") ? line : `${line}.`)));
   if (records.length) {
     parts.push(
       `Inserted records: ${records
