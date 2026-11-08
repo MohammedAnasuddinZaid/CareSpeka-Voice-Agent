@@ -259,10 +259,10 @@ export default function PortalAssistant({
     void loadContext();
   }, [loadContext]);
 
-  // Refresh context every 30s so the readings shown match the live stream.
+  // Refresh context every 12s so the readings shown match the live stream.
   useEffect(() => {
     if (!sessionId) return;
-    const timer = window.setInterval(() => void loadContext(true), 30_000);
+    const timer = window.setInterval(() => void loadContext(true), 12_000);
     return () => window.clearInterval(timer);
   }, [loadContext, sessionId]);
 
