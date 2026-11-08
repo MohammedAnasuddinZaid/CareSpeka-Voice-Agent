@@ -733,6 +733,9 @@ export function rulesAlertLine(patient: ClinicalPatient | null, findings: Signal
   if (!findings.length) return "";
   const who = patient ? patient.displayName : "The patient";
   const worst = findings[0];
+  if (worst.key === "signal_stale") {
+    return `No fresh device readings for ${worst.reading.replace(" ago", "")}. Please check the patient's device and the patient now.`;
+  }
   const rest = findings.slice(1, 3).map((f) => `${f.label.toLowerCase()} ${f.reading}`);
   const tail = rest.length ? `, with ${rest.join(" and ")}` : "";
   return `${who}: ${worst.label.toLowerCase()} is ${worst.reading}, ${worst.note}${tail}. Please assess ${patient ? patient.displayName.split(" ")[0] : "them"} now.`;
@@ -797,7 +800,7 @@ export async function portalBriefing(sessionId: string): Promise<{ line: string;
       : "No live readings yet from this session. Make sure the patient device is streaming.";
     if (ctx.findings.length) {
       return {
-        line: `${live} ${ctx.findings.map((f) => `${f.label} ${f.reading}`).join(", ")}.`,
+        line: `${live} Outside the thresholds: ${ctx.findings.map((f) => `${f.label} ${f.reading}`).join(", ")}. Please check the device and the patient.`,
         engine: "rules",
         model: "rules",
       };
