@@ -556,12 +556,17 @@ export async function askPortal(
     if (ctx.metrics?.blinkRate != null) liveParts.push(`blink rate ${ctx.metrics.blinkRate.toFixed(1)} per minute`);
     if (ctx.metrics?.eyeClosureDuration != null) liveParts.push(`eye closure ${(ctx.metrics.eyeClosureDuration / 1000).toFixed(1)} seconds`);
     if (ctx.metrics?.movementActivity != null) liveParts.push(`movement ${ctx.metrics.movementActivity.toFixed(2)}`);
-    const live = liveParts.length ? `Live readings: ${liveParts.join(", ")}.` : "No live readings yet.";
+    const live = liveParts.length
+      ? `Live readings: ${liveParts.join(", ")}.`
+      : "No live readings are arriving from this session yet.";
+    const liveStatus = ctx.findings.length
+      ? `${live} Outside the thresholds: ${ctx.findings.map((f) => `${f.label} ${f.reading}`).join(", ")}.`
+      : liveParts.length
+        ? `${live} All monitored readings are inside their thresholds.`
+        : live;
     if (!question) {
       return {
-        answer: ctx.findings.length
-          ? `${live} ${ctx.findings.map((f) => `${f.label} ${f.reading}`).join(", ")}.`
-          : `${live} All monitored readings are inside their thresholds.`,
+        answer: liveStatus,
         engine: "rules",
         model: "rules",
         cached: false,
@@ -571,9 +576,7 @@ export async function askPortal(
     const q = question.toLowerCase();
     if (/blink|alertness|closure|movement|reading|vital|status|how is|how are/.test(q)) {
       return {
-        answer: ctx.findings.length
-          ? `${live} ${ctx.findings.map((f) => `${f.label} ${f.reading}`).join(", ")}.`
-          : `${live} All monitored readings are inside their thresholds right now.`,
+        answer: liveStatus,
         engine: "rules",
         model: "rules",
         cached: false,
@@ -789,13 +792,18 @@ export async function portalBriefing(sessionId: string): Promise<{ line: string;
     if (ctx.metrics?.blinkRate != null) liveParts.push(`blink rate ${ctx.metrics.blinkRate.toFixed(1)} per minute`);
     if (ctx.metrics?.eyeClosureDuration != null) liveParts.push(`eye closure ${(ctx.metrics.eyeClosureDuration / 1000).toFixed(1)} seconds`);
     if (ctx.metrics?.movementActivity != null) liveParts.push(`movement ${ctx.metrics.movementActivity.toFixed(2)}`);
-    const live = liveParts.length ? `Live readings right now: ${liveParts.join(", ")}.` : "No live readings yet.";
+    const live = liveParts.length
+      ? `Live readings right now: ${liveParts.join(", ")}.`
+      : "No live readings yet from this session. Make sure the patient device is streaming.";
     if (ctx.findings.length) {
       return {
         line: `${live} ${ctx.findings.map((f) => `${f.label} ${f.reading}`).join(", ")}.`,
         engine: "rules",
         model: "rules",
       };
+    }
+    if (!liveParts.length) {
+      return { line: live, engine: "rules", model: "rules" };
     }
     return {
       line: `${live} All monitored readings are inside their thresholds. Link a patient in the portal to add their history.`,

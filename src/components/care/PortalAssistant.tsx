@@ -51,6 +51,7 @@ import {
   type PortalSeverity,
 } from "@/lib/careClient";
 import { speak, speechSynthesisAvailable, stopSpeaking } from "@/lib/care/browserAI";
+import { rememberCareSession } from "@/lib/session";
 import FreeCallPanel from "@/components/care/FreeCallPanel";
 
 // ---------------------------------------------------------------------------
@@ -152,6 +153,7 @@ export default function PortalAssistant({
   const [alertInterval, setAlertInterval] = useState(15_000);
   const [severityFloor, setSeverityFloor] = useState<SeverityFloor>("all");
   const [showSettings, setShowSettings] = useState(false);
+  const [showLinkPatient, setShowLinkPatient] = useState(false);
   const [speaking, setSpeaking] = useState(false);
 
   // phone calling
@@ -169,6 +171,12 @@ export default function PortalAssistant({
 
   const pairRef = useRef<string | null>(resolvedPair);
   pairRef.current = resolvedPair;
+
+  // Keep the browser-wide "active care session" in sync with this portal, so
+  // the free browser call opens on the session the nurse is paired to.
+  useEffect(() => {
+    if (sessionId) rememberCareSession(sessionId, resolvedPair);
+  }, [resolvedPair, sessionId]);
 
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const idRef = useRef(0);
@@ -449,17 +457,14 @@ const removePatient = async (id: string) => {
 
   // --- derived -------------------------------------------------------------
   const patient = context?.patient ?? null;
-  const linked = Boolean(context?.link);
   const worst = context?.worst ?? "ok";
   const severityStyle = SEVERITY_STYLE[worst];
   const findingCount = context?.findings.length ?? 0;
-  const suggestions = context?.suggestedQuestions?.length
-    ? context.suggestedQuestions
-    : [
-        "What is this patient's history?",
-        "What medications are they on?",
-        "Is anything urgent right now?",
-      ];
+  const suggestions = patient
+    ? context?.suggestedQuestions?.length
+      ? context.suggestedQuestions
+      : ["What is this patient's history?", "What medications are they on?", "Is anything urgent right now?"]
+    : ["What are the live readings?", "Is anything urgent right now?", "What should I check first?"];
   const engineLabel = context?.engine.gemini ? context.engine.model : "local rules";
 
   // --- render --------------------------------------------------------------
@@ -492,8 +497,13 @@ const removePatient = async (id: string) => {
                   Watching <span className="font-semibold text-[#1f1f1f]">{patient.displayName}</span>
                   {patient.room ? ` · ${patient.room}` : ""}
                 </>
+              ) : sessionId ? (
+                <>
+                  Live session <span className="font-semibold text-[#1f1f1f]">{sessionId}</span> · readings only (link a patient for
+                  history)
+                </>
               ) : (
-                "Link a patient to use their history and live readings."
+                "Open this from a paired nurse portal to see live readings."
               )}
             </p>
           </div>
@@ -517,7 +527,7 @@ const removePatient = async (id: string) => {
           </button>
           <button
             onClick={() => setFreeOpen((v) => !v)}
-            disabled={!patient}
+            disabled={!sessionId}
             className="inline-flex items-center gap-1 rounded-full border border-[#ececec] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#6e6e6e] transition hover:border-[#c63a22] hover:text-[#c63a22] disabled:opacity-50"
             title="Talk to the same agent in this browser — free, no phone charges"
           >
@@ -649,84 +659,98 @@ const removePatient = async (id: string) => {
         </div>
       ) : null}
 
-      {/* link patient */}
-      {!linked || !patient ? (
-        <div className="border-b border-[#f0e3de] px-5 py-5">
-          <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-[#1f1f1f]">
-            <Link2 className="h-4 w-4 text-[#c63a22]" /> Which patient is on this bed?
-          </div>
-          <p className="mb-3 text-xs text-[#6e6e6e]">
-            Link this QR session once. The assistant then uses that patient&apos;s inserted records and live readings.
-          </p>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <select
-              value={pickedPatient}
-              onChange={(e) => setPickedPatient(e.target.value)}
-              className="flex-1 rounded-xl border border-[#e5e5e5] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#c63a22]"
-            >
-              <option value="">Choose a patient…</option>
-              {(context?.patients ?? [])
-                .filter((p) => showDemoPatients || !p.synthetic)
-                .map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.displayName}
-                  {p.room ? ` — ${p.room}` : ""}
-                  {p.synthetic ? " (demo)" : ""}
-                </option>
-              ))}
-            </select>
-            <button
-              onClick={() => void linkPatient()}
-              disabled={!pickedPatient || linking}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#c63a22] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#a92f1b] disabled:opacity-50"
-            >
-              {linking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
-              Link patient
-            </button>
-          </div>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
+      {/* optional patient link — live readings work without it */}
+      {!patient ? (
+        <div className="border-b border-[#f0e3de] px-5 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-1.5 text-sm font-semibold text-[#1f1f1f]">
+              <Activity className="h-4 w-4 text-[#c63a22]" /> Live session {sessionId}
+              <span className="text-[11px] font-normal text-[#6e6e6e]">
+                readings only — patient history is optional
+              </span>
+            </div>
             <button
               type="button"
-              onClick={() => setShowDemoPatients((v) => !v)}
-              className="text-[11px] font-semibold text-[#8a8a8a] hover:text-[#c63a22]"
+              onClick={() => setShowLinkPatient((v) => !v)}
+              className="inline-flex items-center gap-1 rounded-full border border-[#e5e5e5] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#6e6e6e] hover:border-[#c63a22] hover:text-[#c63a22]"
             >
-              {showDemoPatients ? "Hide demo patients" : "Show demo patients"}
+              <Link2 className="h-3 w-3" /> {showLinkPatient ? "Hide patient options" : "Link patient (optional)"}
             </button>
-            {(context?.patients ?? []).filter((p) => showDemoPatients || !p.synthetic).length ? (
-              <details className="w-full">
-                <summary className="cursor-pointer text-[11px] font-semibold text-[#8a8a8a] hover:text-red-600">
-                  Remove a patient
-                </summary>
-                <div className="mt-2 flex flex-wrap gap-1.5">
+          </div>
+
+          {showLinkPatient ? (
+            <div className="mt-3">
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <select
+                  value={pickedPatient}
+                  onChange={(e) => setPickedPatient(e.target.value)}
+                  className="flex-1 rounded-xl border border-[#e5e5e5] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#c63a22]"
+                >
+                  <option value="">Choose a patient…</option>
                   {(context?.patients ?? [])
                     .filter((p) => showDemoPatients || !p.synthetic)
                     .map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => void removePatient(p.id)}
-                        disabled={deletingId === p.id}
-                        className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[10px] font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50"
-                      >
-                        {deletingId === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                        Remove {p.displayName}
-                      </button>
+                      <option key={p.id} value={p.id}>
+                        {p.displayName}
+                        {p.room ? ` — ${p.room}` : ""}
+                        {p.synthetic ? " (demo)" : ""}
+                      </option>
                     ))}
-                </div>
-              </details>
-            ) : null}
-          </div>
-          <a
-            href={pickedPatient ? `/care/records?patientId=${encodeURIComponent(pickedPatient)}` : "/care/records"}
-            className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-[#c63a22] hover:underline"
-          >
-            <FileText className="h-3.5 w-3.5" /> Add previous records so the assistant knows the history
-          </a>
+                </select>
+                <button
+                  onClick={() => void linkPatient()}
+                  disabled={!pickedPatient || linking}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#c63a22] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#a92f1b] disabled:opacity-50"
+                >
+                  {linking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
+                  Link patient
+                </button>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowDemoPatients((v) => !v)}
+                  className="text-[11px] font-semibold text-[#8a8a8a] hover:text-[#c63a22]"
+                >
+                  {showDemoPatients ? "Hide demo patients" : "Show demo patients"}
+                </button>
+                {(context?.patients ?? []).filter((p) => showDemoPatients || !p.synthetic).length ? (
+                  <details className="w-full">
+                    <summary className="cursor-pointer text-[11px] font-semibold text-[#8a8a8a] hover:text-red-600">
+                      Remove a patient
+                    </summary>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {(context?.patients ?? [])
+                        .filter((p) => showDemoPatients || !p.synthetic)
+                        .map((p) => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => void removePatient(p.id)}
+                            disabled={deletingId === p.id}
+                            className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[10px] font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50"
+                          >
+                            {deletingId === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                            Remove {p.displayName}
+                          </button>
+                        ))}
+                    </div>
+                  </details>
+                ) : null}
+              </div>
+              <a
+                href={pickedPatient ? `/care/records?patientId=${encodeURIComponent(pickedPatient)}` : "/care/records"}
+                className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-[#c63a22] hover:underline"
+              >
+                <FileText className="h-3.5 w-3.5" /> Add previous records so the assistant knows the history
+              </a>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
       {/* live readings / findings */}
-      {patient ? (
+      {sessionId ? (
         <div className="border-b border-[#f0e3de] px-5 py-4">
           <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-[#6e6e6e]">
             <Activity className="h-3.5 w-3.5" /> Live readings
@@ -749,8 +773,12 @@ const removePatient = async (id: string) => {
                 );
               })}
             </div>
-          ) : (
+          ) : context?.metrics ? (
             <p className="mt-2 text-[11px] text-emerald-700">All monitored readings are inside their thresholds.</p>
+          ) : (
+            <p className="mt-2 text-[11px] text-[#9ca3af]">
+              Waiting for the patient device to stream blink rate, alertness, eye closure and movement.
+            </p>
           )}
         </div>
       ) : null}
@@ -801,7 +829,11 @@ const removePatient = async (id: string) => {
           {turns.length === 0 ? (
             <div className="rounded-xl border border-dashed border-[#e5e5e5] px-4 py-5 text-center">
               <p className="text-sm font-medium text-[#4b4b4b]">
-                {patient ? `Ask about ${patient.displayName.split(" ")[0]} — by voice or text.` : "Link a patient to begin."}
+                {patient
+                  ? `Ask about ${patient.displayName.split(" ")[0]} — by voice or text.`
+                  : sessionId
+                    ? "Ask about the live readings — by voice or text."
+                    : "Pair with a patient device to begin."}
               </p>
               <p className="mt-1 text-xs text-[#9ca3af]">
                 Answers use the inserted records and the live Blink Rate, Alertness, Eye Closure and Movement readings.
@@ -852,7 +884,7 @@ const removePatient = async (id: string) => {
           </div>
         ) : null}
 
-        {suggestions.length > 0 && patient ? (
+        {suggestions.length > 0 ? (
           <div className="mb-3 flex flex-wrap gap-1.5">
             {suggestions.slice(0, 5).map((s) => (
               <button
@@ -871,7 +903,7 @@ const removePatient = async (id: string) => {
           <button
             type="button"
             onClick={toggleListen}
-            disabled={!patient || freeOpen}
+            disabled={!sessionId || freeOpen}
             className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-white transition disabled:opacity-40 ${
               listening ? "animate-pulse bg-red-600" : "bg-[#1f1f1f] hover:bg-black"
             }`}
@@ -882,13 +914,21 @@ const removePatient = async (id: string) => {
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            disabled={!patient}
-            placeholder={patient ? (listening ? "Listening…" : "Ask about the patient or the live readings…") : "Link a patient first"}
+            disabled={!sessionId}
+            placeholder={
+              !sessionId
+                ? "Waiting for a session"
+                : listening
+                  ? "Listening…"
+                  : patient
+                    ? "Ask about the patient or the live readings…"
+                    : "Ask about the live readings…"
+            }
             className="h-11 flex-1 rounded-full border border-[#e5e5e5] bg-white px-4 text-sm outline-none focus:border-[#c63a22] disabled:bg-[#f7f7f7]"
           />
           <button
             type="submit"
-            disabled={thinking || !input.trim() || !patient}
+            disabled={thinking || !input.trim() || !sessionId}
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#c63a22] text-white transition hover:bg-[#a92f1b] disabled:opacity-40"
             title="Send"
           >

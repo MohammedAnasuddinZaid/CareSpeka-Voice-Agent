@@ -19,7 +19,7 @@ import {
   Radio,
 } from "lucide-react";
 import { GestureLogEntry, NurseReply, ESCALATION_RULES } from "@/types";
-import { getSession, setSessionId, clearSession } from "@/lib/session";
+import { getSession, setSessionId, clearSession, rememberCareSession } from "@/lib/session";
 import { useLiveSync } from "@/hooks/useLiveSync";
 import { evaluateEscalations } from "@/lib/escalation";
 import { isAlarmMuted, setAlarmMuted, startAlarm, stopAlarm } from "@/lib/nurseAlarm";
@@ -114,6 +114,9 @@ export default function NurseViewPage() {
       setSessionId(id); // overwrite stale pairing in localStorage
       setSessionInput(id);
       setPaired(true);
+      // Remember this pairing so the free browser call (and anything else in
+      // this browser) connects to the same session automatically.
+      rememberCareSession(id, params.get("pair"));
       // Unique-QR tracking: report this scan so the patient console + ward board
       // see exactly which device linked to this bed (IP + device, once per tab).
       const pair = params.get("pair") ?? "";
@@ -131,6 +134,7 @@ export default function NurseViewPage() {
     if (existing?.sessionId) {
       setSessionInput(existing.sessionId);
       setPaired(true);
+      rememberCareSession(existing.sessionId);
     }
   }, []);
 
@@ -559,7 +563,9 @@ export default function NurseViewPage() {
               <button
                 onClick={() => {
                   if (sessionInput.trim().length >= 3) {
-                    setSessionId(sessionInput.trim().toUpperCase());
+                    const id = sessionInput.trim().toUpperCase();
+                    setSessionId(id);
+                    rememberCareSession(id);
                     setPaired(true);
                   }
                 }}

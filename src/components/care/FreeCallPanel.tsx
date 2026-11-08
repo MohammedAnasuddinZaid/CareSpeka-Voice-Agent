@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Loader2, Monitor, PhoneCall, QrCode, Smartphone } from "lucide-react";
 import { carePhoneQr, type PhoneQr } from "@/lib/careClient";
+import { getActiveCareSession } from "@/lib/session";
 import BrowserCall from "@/components/care/PhoneCall";
 export default function FreeCallPanel({
   sessionId,
@@ -35,24 +36,34 @@ export default function FreeCallPanel({
   const [loading, setLoading] = useState(false);
   const [qrError, setQrError] = useState<string | null>(null);
   const loadingRef = useRef(false);
+  const [resolvedSession, setResolvedSession] = useState<string | null>(sessionId);
+  const [resolvedPair, setResolvedPair] = useState<string | null>(pair ?? null);
+
+  // When this panel is rendered without an explicit session (for example a
+  // bare browser-call surface), reuse the session the nurse portal paired with.
+  useEffect(() => {
+    const active = getActiveCareSession();
+    setResolvedSession(sessionId ?? active?.sessionId ?? null);
+    setResolvedPair(pair ?? active?.pair ?? null);
+  }, [pair, sessionId]);
 
   useEffect(() => {
     if (defaultOpen) setOpen(true);
   }, [defaultOpen]);
 
   const loadQr = useCallback(async () => {
-    if (!sessionId || loadingRef.current) return;
+    if (!resolvedSession || loadingRef.current) return;
     loadingRef.current = true;
     setLoading(true);
     setQrError(null);
     try {
-      const res = await carePhoneQr(sessionId, pair);
+      const res = await carePhoneQr(resolvedSession, resolvedPair);
       setQr(res);
     } catch {
       // Fall back to a plain link; the caller can still open it on this device.
       if (typeof window !== "undefined") {
-        const p = new URLSearchParams({ session: sessionId });
-        if (pair) p.set("pair", pair);
+        const p = new URLSearchParams({ session: resolvedSession });
+        if (resolvedPair) p.set("pair", resolvedPair);
         setQr({ url: `${window.location.origin}/care/phone?${p.toString()}`, qrDataUrl: "" });
       }
       setQrError("Could not draw the QR here — the link below still works.");
@@ -60,12 +71,12 @@ export default function FreeCallPanel({
       loadingRef.current = false;
       setLoading(false);
     }
-  }, [pair, sessionId]);
+  }, [resolvedPair, resolvedSession]);
 
   // Fetch once so the direct link is usable without opening the QR first.
   useEffect(() => {
-    if (sessionId) void loadQr();
-  }, [loadQr, sessionId]);
+    if (resolvedSession) void loadQr();
+  }, [loadQr, resolvedSession]);
 
   const toggleQr = useCallback(() => {
     setShowQr((v) => !v);
@@ -93,7 +104,7 @@ export default function FreeCallPanel({
             <button
               type="button"
               onClick={() => setOpen((v) => !v)}
-              disabled={!sessionId}
+              disabled={!resolvedSession}
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#1f1f1f] px-3.5 py-2 text-xs font-semibold text-white transition hover:bg-[#c63a22] disabled:opacity-50"
             >
               <Monitor className="h-3.5 w-3.5" /> {open ? "Hide browser call" : "Talk on this device"}
@@ -103,7 +114,7 @@ export default function FreeCallPanel({
           <button
             type="button"
             onClick={toggleQr}
-            disabled={!sessionId}
+            disabled={!resolvedSession}
             className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#ececec] bg-white px-3.5 py-2 text-xs font-semibold text-[#1f1f1f] transition hover:border-[#c63a22] disabled:opacity-50"
           >
             {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <QrCode className="h-3.5 w-3.5 text-[#c63a22]" />}
@@ -158,9 +169,9 @@ export default function FreeCallPanel({
         ) : null}
       </div>
 
-      {inline && open && sessionId ? (
+      {inline && open && resolvedSession ? (
         <div className="border-t border-[#f0e3de] p-3">
-          <BrowserCall sessionId={sessionId} pair={pair} compact />
+          <BrowserCall sessionId={resolvedSession} pair={resolvedPair} compact />
         </div>
       ) : null}
     </div>

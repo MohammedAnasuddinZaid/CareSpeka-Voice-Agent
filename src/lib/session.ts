@@ -86,6 +86,45 @@ export function getSession(): SessionInfo | null {
   return null;
 }
 
+const ACTIVE_CARE_KEY = "carespeak_active_care_session";
+
+/**
+ * The care session the nurse portal is currently connected to.
+ *
+ * The portal writes this whenever it pairs, so any other CareSpeak surface in
+ * the same browser (for example the free browser call) can pick up the exact
+ * session without asking the nurse to choose a patient again.
+ */
+export interface ActiveCareSession {
+  sessionId: string;
+  pair: string | null;
+  at: number;
+}
+
+export function rememberCareSession(sessionId: string, pair?: string | null): void {
+  if (typeof window === "undefined") return;
+  const clean = sessionId.trim().toUpperCase();
+  if (!/^[A-Z0-9_-]{3,32}$/.test(clean)) return;
+  try {
+    const value: ActiveCareSession = { sessionId: clean, pair: pair?.trim() || null, at: Date.now() };
+    localStorage.setItem(ACTIVE_CARE_KEY, JSON.stringify(value));
+  } catch {}
+}
+
+export function getActiveCareSession(): ActiveCareSession | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(ACTIVE_CARE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ActiveCareSession;
+    const clean = parsed?.sessionId?.trim().toUpperCase() ?? "";
+    if (!/^[A-Z0-9_-]{3,32}$/.test(clean)) return null;
+    return { sessionId: clean, pair: parsed.pair?.trim() || null, at: parsed.at ?? 0 };
+  } catch {
+    return null;
+  }
+}
+
 const ORIGIN_KEY = "carespeak_dashboard_origin";
 
 /**

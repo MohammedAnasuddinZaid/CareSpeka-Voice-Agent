@@ -41,6 +41,7 @@ import {
   type PortalContext,
 } from "@/lib/careClient";
 import { speak, speechSynthesisAvailable, stopSpeaking } from "@/lib/care/browserAI";
+import { getActiveCareSession, getSession, rememberCareSession } from "@/lib/session";
 
 // ---------------------------------------------------------------------------
 // browser speech recognition (optional, never assumed)
@@ -79,6 +80,31 @@ function reading(value: number | undefined, suffix: string, digits = 0): string 
   return `${value.toFixed(digits)}${suffix}`;
 }
 
+function normalizeSessionId(raw: string | null | undefined): string {
+  const clean = raw?.trim().toUpperCase() ?? "";
+  return /^[A-Z0-9_-]{3,32}$/.test(clean) ? clean : "";
+}
+
+/** Spoken summary of whatever the patient device is streaming right now. */
+function liveSummary(ctx: PortalContext | null): string {
+  if (!ctx) return "No live readings have arrived from the patient device yet.";
+  const parts: string[] = [];
+  const m = ctx.metrics;
+  const blink = reading(m?.blinkRate, " per minute", 1);
+  const alertness = reading(m?.alertnessScore, "%");
+  const closure = reading(m?.eyeClosureDuration != null ? m.eyeClosureDuration / 1000 : undefined, " seconds", 1);
+  const movement = reading(m?.movementActivity, "%");
+  if (blink) parts.push(`blink rate ${blink}`);
+  if (alertness) parts.push(`alertness ${alertness}`);
+  if (closure) parts.push(`eye closure ${closure}`);
+  if (movement) parts.push(`movement ${movement}`);
+  const head = parts.length ? `Live readings right now: ${parts.join(", ")}.` : "No live readings have arrived from the patient device yet.";
+  if (!parts.length) return head;
+  const findings = ctx.findings ?? [];
+  const outside = findings.map((f) => `${f.label.toLowerCase()} ${f.reading}`).join(", ");
+  return findings.length ? `${head} Outside the thresholds: ${outside}.` : `${head} All monitored readings are inside their thresholds.`;
+}
+
 export default function BrowserCall({
   sessionId,
   pair = null,
@@ -93,6 +119,13 @@ export default function BrowserCall({
   const [context, setContext] = useState<PortalContext | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  // The call can be opened three ways: with an explicit ?session=... from a QR,
+  // embedded in the nurse portal, or bare. In the last case we reuse the
+  // session the portal is currently paired to in this browser.
+  const [activeSessionId, setActiveSessionId] = useState(() => normalizeSessionId(sessionId));
+  const [activePair, setActivePair] = useState<string | null>(pair ?? null);
+  const [sessionReady, setSessionReady] = useState(() => Boolean(normalizeSessionId(sessionId)));
 
   const [started, setStarted] = useState(false);
   const [listening, setListening] = useState(false);
@@ -113,6 +146,7 @@ export default function BrowserCall({
   const [unlinking, setUnlinking] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
   const [showAddPatient, setShowAddPatient] = useState(false);
+  const [showPatientPicker, setShowPatientPicker] = useState(false);
   const [newPatientName, setNewPatientName] = useState("");
   const [newPatientConcern, setNewPatientConcern] = useState("");
   const [creatingPatient, setCreatingPatient] = useState(false);
@@ -120,7 +154,7 @@ export default function BrowserCall({
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const pairRef = useRef<string | null>(pair);
-  pairRef.current = pair;
+  pairRef.current = activePair;
 
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const startedRef = useRef(false);
@@ -212,7 +246,7 @@ export default function BrowserCall({
   const ask = useCallback(
     async (raw: string) => {
       const question = raw.trim().slice(0, 1000);
-      if (!question || !sessionId || thinkingRef.current) return;
+      if (!question || !activeSessionId || thinkingRef.current) return;
 
       thinkingRef.current = true;
       setThinking(true);
@@ -222,7 +256,7 @@ export default function BrowserCall({
       stopListening();
 
       try {
-        const res = await carePortalAsk(sessionId, question, pairRef.current);
+        const res = await carePortalAsk(activeSessionId, question, pairRef.current);
         append("agent", res.result.answer, res.result.engine);
         speakLine(res.result.answer);
       } catch (err) {
@@ -238,7 +272,7 @@ export default function BrowserCall({
         if (!speakingRef.current) resumeListening();
       }
     },
-    [append, sessionId, speakLine, stopListening, resumeListening]
+    [activeSessionId, append, speakLine, stopListening, resumeListening]
   );
 
   askRef.current = ask;
@@ -297,30 +331,53 @@ export default function BrowserCall({
     };
   }, []);
 
-  // --- load the patient context --------------------------------------------
+  // --- resolve the session this call should use -----------------------------
 
   useEffect(() => {
-    if (!sessionId) {
-      setLoadError("This call link is missing its session id. Scan the patient's QR code again.");
+    const fromUrl = normalizeSessionId(sessionId);
+    if (fromUrl) {
+      setActiveSessionId(fromUrl);
+      setActivePair(pair ?? null);
+      setSessionReady(true);
+      rememberCareSession(fromUrl, pair);
+      return;
+    }
+
+    // No ?session= in the URL: reuse whatever the nurse portal paired with in
+    // this browser, falling back to the legacy patient-device session key.
+    const remembered = getActiveCareSession();
+    const legacy = getSession();
+    const id = remembered?.sessionId ?? normalizeSessionId(legacy?.sessionId);
+    setActiveSessionId(id);
+    setActivePair(remembered?.pair ?? null);
+    setSessionReady(true);
+    if (id) rememberCareSession(id, remembered?.pair ?? null);
+  }, [pair, sessionId]);
+
+  // --- load / refresh the patient context -----------------------------------
+
+  useEffect(() => {
+    if (!sessionReady) return;
+    if (!activeSessionId) {
+      setLoadError("No CareSpeak session is connected yet. Open this call from the paired nurse portal, or scan the patient's QR code.");
       setLoading(false);
       return;
     }
+
     let active = true;
     setLoading(true);
     setLoadError(null);
-    carePortalContext(sessionId, pair)
+    carePortalContext(activeSessionId, activePair)
       .then((res) => {
-        if (active) {
-          setContext(res.context);
-          if (res.context.link) setPickedPatient(res.context.link.patientId);
-        }
+        if (!active) return;
+        setContext(res.context);
+        if (res.context.link) setPickedPatient(res.context.link.patientId);
       })
       .catch((err) => {
-        if (active) {
-          setLoadError(
-            err instanceof CareApiError ? err.message : "Could not reach the care record for this session."
-          );
-        }
+        if (!active) return;
+        setLoadError(
+          err instanceof CareApiError ? err.message : "Could not reach the care record for this session."
+        );
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -328,7 +385,33 @@ export default function BrowserCall({
     return () => {
       active = false;
     };
-  }, [pair, sessionId]);
+  }, [activePair, activeSessionId, sessionReady]);
+
+  // While the call is live, keep the readings fresh without ever flashing the
+  // loading state (the signal chips should update on their own).
+  useEffect(() => {
+    if (!started || !activeSessionId) return;
+    let active = true;
+    const refresh = () => {
+      if (!active || document.hidden) return;
+      carePortalContext(activeSessionId, pairRef.current)
+        .then((res) => {
+          if (active) setContext(res.context);
+        })
+        .catch(() => undefined);
+    };
+    const timer = window.setInterval(refresh, 10_000);
+    const onVisible = () => {
+      if (!document.hidden) refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    refresh();
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [activeSessionId, started]);
 
   // Keep the transcript pinned to the newest turn (not on first paint, so the
   // page never scrolls itself away from the header).
@@ -340,24 +423,20 @@ export default function BrowserCall({
   // --- call control ---------------------------------------------------------
 
   const startCall = useCallback(() => {
-    if (startedRef.current) return;
+    if (startedRef.current || !activeSessionId) return;
     startedRef.current = true;
     wantMicRef.current = true;
     setStarted(true);
     setMicError(null);
     setSendError(null);
+    thinkingRef.current = true;
+    setThinking(true);
 
-    const opening = context?.patient
-      ? (() => {
-          thinkingRef.current = true;
-          setThinking(true);
-          return carePortalBrief(sessionId, pairRef.current)
-            .then((res) => res.brief.line)
-            .catch(() => "");
-        })()
-      : Promise.resolve(
-          "Hi, this is the CareSpeak assistant. No patient is linked to this session yet, but I can still report the live readings. Link a patient in the nurse portal to add their history."
-        );
+    // Always ask the portal brain: with a linked patient it briefs on their
+    // history, without one it reports whatever the device is streaming now.
+    const opening = carePortalBrief(activeSessionId, pairRef.current)
+      .then((res) => res.brief.line || `Hi, this is the CareSpeak assistant. ${liveSummary(context)}`)
+      .catch(() => `Hi, this is the CareSpeak assistant. ${liveSummary(context)}`);
 
     void opening
       .then((line) => {
@@ -374,7 +453,7 @@ export default function BrowserCall({
         setThinking(false);
         if (!speakingRef.current) resumeListening();
       });
-  }, [append, context?.patient, resumeListening, sessionId, speakLine]);
+  }, [activeSessionId, append, context, resumeListening, speakLine]);
 
   const endCall = useCallback(() => {
     startedRef.current = false;
@@ -420,11 +499,11 @@ export default function BrowserCall({
   );
 
   const linkPatient = useCallback(async () => {
-    if (!sessionId || !pickedPatient || linking) return;
+    if (!activeSessionId || !pickedPatient || linking) return;
     setLinking(true);
     setLinkError(null);
     try {
-      const res = await carePortalLink(sessionId, pickedPatient, pairRef.current);
+      const res = await carePortalLink(activeSessionId, pickedPatient, pairRef.current);
       setContext(res.context);
       setPickedPatient(res.context.link?.patientId ?? pickedPatient);
     } catch (err) {
@@ -432,14 +511,14 @@ export default function BrowserCall({
     } finally {
       setLinking(false);
     }
-  }, [linking, pickedPatient, sessionId]);
+  }, [activeSessionId, linking, pickedPatient]);
 
   const unlinkPatient = useCallback(async () => {
-    if (!sessionId || unlinking) return;
+    if (!activeSessionId || unlinking) return;
     setUnlinking(true);
     setLinkError(null);
     try {
-      const res = await carePortalUnlink(sessionId, pairRef.current);
+      const res = await carePortalUnlink(activeSessionId, pairRef.current);
       setContext(res.context);
       setPickedPatient("");
     } catch (err) {
@@ -447,7 +526,7 @@ export default function BrowserCall({
     } finally {
       setUnlinking(false);
     }
-  }, [sessionId, unlinking]);
+  }, [activeSessionId, unlinking]);
 
   const addPatient = useCallback(
     async (e: FormEvent) => {
@@ -462,7 +541,7 @@ export default function BrowserCall({
         });
         const created = res.patient;
         // link it straight away
-        const linked = await carePortalLink(sessionId, created.id, pairRef.current);
+        const linked = await carePortalLink(activeSessionId, created.id, pairRef.current);
         setContext(linked.context);
         setPickedPatient(created.id);
         setNewPatientName("");
@@ -474,19 +553,19 @@ export default function BrowserCall({
         setCreatingPatient(false);
       }
     },
-    [creatingPatient, newPatientConcern, newPatientName, sessionId]
+    [activeSessionId, creatingPatient, newPatientConcern, newPatientName]
   );
 
   const removePatient = useCallback(
     async (id: string) => {
-      if (!sessionId) return;
+      if (!activeSessionId) return;
       if (!window.confirm("Remove this patient and their records?")) return;
       setDeletingId(id);
       setLinkError(null);
       try {
         await careDeletePatient(id);
         // refresh context
-        const res = await carePortalContext(sessionId, pairRef.current);
+        const res = await carePortalContext(activeSessionId, pairRef.current);
         setContext(res.context);
         if (pickedPatient === id) setPickedPatient("");
       } catch (err) {
@@ -495,7 +574,7 @@ export default function BrowserCall({
         setDeletingId(null);
       }
     },
-    [pickedPatient, sessionId]
+    [activeSessionId, pickedPatient]
   );
 
   const send = useCallback(
@@ -514,9 +593,16 @@ export default function BrowserCall({
   const chips = [
     { label: "Blink rate", value: reading(metrics?.blinkRate, "/min"), icon: Eye },
     { label: "Alertness", value: reading(metrics?.alertnessScore, "%"), icon: Activity },
-    { label: "Eye closure", value: reading(metrics?.eyeClosureDuration, "s", 1), icon: Eye },
+    {
+      label: "Eye closure",
+      value: reading(metrics?.eyeClosureDuration != null ? metrics.eyeClosureDuration / 1000 : undefined, "s", 1),
+      icon: Eye,
+    },
     { label: "Movement", value: reading(metrics?.movementActivity, "%"), icon: Waves },
   ].filter((c) => c.value);
+
+  const findings = context?.findings ?? [];
+  const worst = context?.worst ?? "ok";
 
   const status = loadError
     ? { label: "Link problem", tone: "bg-red-50 text-red-700 border-red-200" }
@@ -532,7 +618,12 @@ export default function BrowserCall({
               ? { label: "Listening", tone: "bg-emerald-50 text-emerald-700 border-emerald-200" }
               : { label: "On call", tone: "bg-slate-50 text-slate-600 border-slate-200" };
 
-  const suggestions = (context?.suggestedQuestions ?? []).slice(0, compact ? 2 : 3);
+  const suggestions = patient
+    ? (context?.suggestedQuestions ?? []).slice(0, compact ? 2 : 3)
+    : ["What are the live readings?", "Is anything urgent right now?", "What should I check first?"].slice(
+        0,
+        compact ? 2 : 3
+      );
 
   return (
     <section className={`flex flex-col overflow-hidden rounded-3xl border border-[#ececec] bg-white shadow-sm ${className}`}>
@@ -548,6 +639,10 @@ export default function BrowserCall({
                 <>
                   With <span className="font-semibold text-[#1f1f1f]">{patient.displayName}</span>
                   {patient.room ? ` · ${patient.room}` : ""}
+                </>
+              ) : activeSessionId ? (
+                <>
+                  Live session <span className="font-semibold text-[#1f1f1f]">{activeSessionId}</span> · no patient linked
                 </>
               ) : (
                 "Same CareSpeak agent — no phone charges"
@@ -575,6 +670,19 @@ export default function BrowserCall({
         </div>
       ) : null}
 
+      {findings.length ? (
+        <div
+          className={`border-b px-4 py-2 text-[11px] sm:px-5 ${
+            worst === "critical"
+              ? "border-red-100 bg-red-50 text-red-700"
+              : "border-amber-100 bg-amber-50 text-amber-800"
+          }`}
+        >
+          <span className="font-semibold">{worst === "critical" ? "Critical" : "Watch"}:</span>{" "}
+          {findings.map((f) => `${f.label} ${f.reading}`).join(" · ")}
+        </div>
+      ) : null}
+
       {/* patient linking */}
       {!loadError && !loading ? (
         <div className="border-b border-[#f4efec] px-4 py-3 sm:px-5">
@@ -594,47 +702,68 @@ export default function BrowserCall({
                   {unlinking ? <Loader2 className="h-3 w-3 animate-spin" /> : "×"}
                 </button>
               </span>
+            ) : activeSessionId ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold text-sky-700">
+                Live session {activeSessionId}
+              </span>
             ) : (
-              <span className="text-[11px] text-amber-700">Not linked yet</span>
+              <span className="text-[11px] text-amber-700">No session connected</span>
             )}
-            <select
-              value={pickedPatient}
-              onChange={(e) => setPickedPatient(e.target.value)}
-              className="min-w-0 flex-1 rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs outline-none focus:border-[#c63a22]"
-            >
-              <option value="">Choose a patient…</option>
-              {visiblePatients.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.displayName}
-                  {p.room ? ` — ${p.room}` : ""}
-                  {p.synthetic ? " (demo)" : ""}
-                </option>
-              ))}
-            </select>
             <button
               type="button"
-              onClick={() => void linkPatient()}
-              disabled={!pickedPatient || linking}
-              className="inline-flex items-center gap-1 rounded-lg bg-[#c63a22] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#a92f1b] disabled:opacity-50"
-            >
-              {linking ? <Loader2 className="h-3 w-3 animate-spin" /> : <Link2 className="h-3 w-3" />}
-              Link
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowAddPatient((v) => !v)}
-              className="inline-flex items-center gap-1 rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-semibold text-[#1f1f1f] hover:border-[#c63a22]"
-            >
-              + Add patient
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowDemoPatients((v) => !v)}
+              onClick={() => setShowPatientPicker((v) => !v)}
               className="text-[10px] font-semibold text-[#8a8a8a] hover:text-[#c63a22]"
             >
-              {showDemoPatients ? "Hide demo" : "Show demo"}
+              {showPatientPicker ? "Hide patient options" : "Link a patient (optional)"}
             </button>
           </div>
+
+          {showPatientPicker ? (
+            <div className="mt-3 rounded-xl border border-[#eee] bg-[#fbfaf9] p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={pickedPatient}
+                  onChange={(e) => setPickedPatient(e.target.value)}
+                  className="min-w-0 flex-1 rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs outline-none focus:border-[#c63a22]"
+                >
+                  <option value="">Choose a patient…</option>
+                  {visiblePatients.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.displayName}
+                      {p.room ? ` — ${p.room}` : ""}
+                      {p.synthetic ? " (demo)" : ""}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => void linkPatient()}
+                  disabled={!pickedPatient || linking || !activeSessionId}
+                  className="inline-flex items-center gap-1 rounded-lg bg-[#c63a22] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#a92f1b] disabled:opacity-50"
+                >
+                  {linking ? <Loader2 className="h-3 w-3 animate-spin" /> : <Link2 className="h-3 w-3" />}
+                  Link
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowAddPatient((v) => !v)}
+                  className="inline-flex items-center gap-1 rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-semibold text-[#1f1f1f] hover:border-[#c63a22]"
+                >
+                  + Add patient
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowDemoPatients((v) => !v)}
+                  className="text-[10px] font-semibold text-[#8a8a8a] hover:text-[#c63a22]"
+                >
+                  {showDemoPatients ? "Hide demo" : "Show demo"}
+                </button>
+              </div>
+              <p className="mt-2 text-[10px] text-[#8a8a8a]">
+                Optional. Linking adds the patient&apos;s history and care plan; the live readings above work without it.
+              </p>
+            </div>
+          ) : null}
 
           {linkError ? (
             <div className="mt-2 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] text-red-700">
@@ -642,7 +771,7 @@ export default function BrowserCall({
             </div>
           ) : null}
 
-          {showAddPatient ? (
+          {showPatientPicker && showAddPatient ? (
             <form onSubmit={addPatient} className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
               <input
                 value={newPatientName}
@@ -694,8 +823,13 @@ export default function BrowserCall({
       ) : null}
 
       {loadError ? (
-        <div className="m-4 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {loadError}
+        <div className="m-4 flex flex-wrap items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> {loadError}
+          {!activeSessionId ? (
+            <a href="/nurse-view" className="rounded-full border border-red-300 bg-white px-2.5 py-1 text-[11px] font-semibold hover:bg-red-100">
+              Open nurse portal
+            </a>
+          ) : null}
         </div>
       ) : null}
 
@@ -706,7 +840,7 @@ export default function BrowserCall({
             <p className="font-semibold text-[#1f1f1f]">Ready when you are</p>
             <p className="mt-1">
               Press <span className="font-semibold text-[#c63a22]">Start call</span> and the agent will
-              {patient ? " brief you on this patient" : " greet you"}. Then just talk — or type below.
+              {patient ? " brief you on this patient" : " report the live readings"}. Then just talk — or type below.
             </p>
           </div>
         ) : null}
@@ -756,7 +890,7 @@ export default function BrowserCall({
             <button
               type="button"
               onClick={startCall}
-              disabled={loading || Boolean(loadError)}
+              disabled={loading || Boolean(loadError) || !activeSessionId}
               className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#c63a22] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#a92f1b] disabled:opacity-50 sm:flex-none"
             >
               <PhoneCall className="h-4 w-4" /> Start call
@@ -826,7 +960,7 @@ export default function BrowserCall({
           />
           <button
             type="submit"
-            disabled={!input.trim() || thinking || !sessionId}
+            disabled={!input.trim() || thinking || !activeSessionId}
             className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#1f1f1f] text-white transition hover:bg-[#c63a22] disabled:opacity-40"
             aria-label="Send question"
           >
