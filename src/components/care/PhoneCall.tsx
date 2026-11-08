@@ -415,6 +415,36 @@ export default function BrowserCall({
     };
   }, [activePair, activeSessionId, sessionReady]);
 
+  // Keep the patient context fresh even before the call starts, so a phone that
+  // was opened before the nurse linked a patient picks up the link quickly.
+  useEffect(() => {
+    if (started || !activeSessionId) return;
+    let active = true;
+    const refresh = () => {
+      if (!active || document.hidden) return;
+      carePortalContext(activeSessionId, pairRef.current)
+        .then((res) => {
+          if (active) {
+            setContext(res.context);
+            if (res.context.link) setPickedPatient(res.context.link.patientId);
+            if (!res.context.patient) setShowPatientPicker(true);
+          }
+        })
+        .catch(() => undefined);
+    };
+    const timer = window.setInterval(refresh, 2000);
+    const onVisible = () => {
+      if (!document.hidden) refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    refresh();
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [activeSessionId, started]);
+
   // While the call is live, keep the readings fresh without ever flashing the
   // loading state (the signal chips should update on their own).
   useEffect(() => {

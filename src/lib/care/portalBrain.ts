@@ -749,7 +749,7 @@ export function parsePortalDictation(
   patient: ClinicalPatient
 ): { text: string } | null {
   const m = question.match(
-    /^\s*(?:please\s+)?(?:can you\s+)?(?:send|message|text|tell|dictate)\b([\s\S]*)$/i
+    /^\s*(?:(?:please|can you|could you|would you mind|would you)\s+)*(?:send\s+(?:a\s+)?(?:message|note)\s+to|send|message|text|tell|dictate)\b([\s\S]*)$/i
   );
   if (!m) return null;
 
@@ -768,7 +768,7 @@ export function parsePortalDictation(
     rest = rest.replace(new RegExp(`^\\s*${esc(name)}\\b`, "i"), "");
   }
   rest = rest.replace(/^\s*(?:a\s+)?(?:message|note|text)\b/i, ""); // "a message"
-  rest = rest.replace(/^\s*(?:saying|that|to say|to|says|tell them|:|-|,)\s*/i, ""); // connector
+  rest = rest.replace(/^\s*(?:saying|that|to say|asking|to ask|to|says|tell them|:|-|,)\s*/i, ""); // connector
   rest = rest.replace(/^["']|["']$/g, "").trim();
 
   if (!rest) return null;
