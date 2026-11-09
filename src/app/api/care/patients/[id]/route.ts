@@ -29,6 +29,11 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
   const nurse = await guardNurse(req);
   if (isResponse(nurse)) return nurse;
   const { id } = await ctx.params;
+  const sessions = await listSessions(200);
+  const active = sessions.some(
+    (s) => s.patientId === id && (s.status === "created" || s.status === "waiting" || s.status === "active" || s.status === "ending")
+  );
+  if (active) return fail("Cannot delete a patient with an active session. End the session first.", 409);
   const ok_ = await deletePatient(id);
   if (!ok_) return fail("Patient not found.", 404);
   return ok({ deleted: id });

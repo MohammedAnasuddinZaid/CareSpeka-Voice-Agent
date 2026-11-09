@@ -499,13 +499,20 @@ export async function buildPortalContext(sessionId: string): Promise<PortalConte
   const metrics = newestMetrics(metricsMap);
   const vitals = newestVitals(vitalsMap);
   const findings = analyzeSignals(metrics, vitals);
-  const patient = link ? await getPatient(link.patientId) : null;
-  const records = link ? await listRecords(link.patientId) : [];
+  let resolvedLink = link;
+  let patient = link ? await getPatient(link.patientId) : null;
+  if (link && !patient) {
+    // Stale link: the patient no longer exists. Drop the link so callers do not
+    // dereference a null patient downstream.
+    resolvedLink = null;
+    void unlinkSessionPatient(sessionId).catch(() => undefined);
+  }
+  const records = resolvedLink ? await listRecords(resolvedLink.patientId) : [];
 
   return {
     sessionId,
-    link,
-    patientId: link?.patientId ?? null,
+    link: resolvedLink,
+    patientId: resolvedLink?.patientId ?? null,
     patient,
     records: records.map((r) => ({
       id: r.id,

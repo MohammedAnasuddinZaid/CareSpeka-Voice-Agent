@@ -4,14 +4,14 @@
  *
  * Layered, weakest-to-strongest:
  *   1. a signed-in nurse cookie always works;
- *   2. a valid `pair` token from the patient's QR proves the caller scanned it;
- *   3. if no pair token was ever registered for the session — e.g. the
- *      serverless in-memory registry was recycled — the session id itself is the
- *      capability, exactly like /api/sync and /api/stream.
+ *   2. a valid `pair` token from the patient's QR proves the caller scanned it.
+ *
+ * Note: a session id alone is NOT a capability. Pair tokens must be persisted in
+ * the shared store so they survive instance recycling.
  */
 import type { NextRequest } from "next/server";
 import { nurseFromRequest } from "./auth";
-import { hasRegistration, verifyPairToken } from "@/lib/server/pairing";
+import { verifyPairToken } from "@/lib/server/pairing";
 
 export interface SessionActor {
   role: string;
@@ -37,6 +37,5 @@ export async function authorizeSession(
     };
   }
   if (pair && verifyPairToken(session, pair)) return { allowed: true };
-  if (!hasRegistration(session)) return { allowed: true };
   return { allowed: false };
 }

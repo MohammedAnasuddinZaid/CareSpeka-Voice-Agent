@@ -105,8 +105,7 @@ export async function participantFromRequest(req: NextRequest): Promise<string |
   if (header) return header.trim();
   const auth = req.headers.get("authorization");
   if (auth && auth.toLowerCase().startsWith("bearer ")) return auth.slice(7).trim();
-  const url = new URL(req.url);
-  return url.searchParams.get("participant");
+  return null;
 }
 
 export function buildSessionCookie(token: string): string {

@@ -206,8 +206,9 @@ export default function CareDashboard() {
         }
         if (data.insights) setInsights(data.insights);
         if (data.tasks) setTasks(data.tasks);
-      } catch {
-        /* keep polling */
+      } catch (err) {
+        if (err instanceof CareApiError && err.status === 401) setAuthState("anon");
+        /* keep polling otherwise */
       }
       if (active) timer = setTimeout(tick, 1500);
     };
@@ -391,7 +392,7 @@ export default function CareDashboard() {
       const rep = await careGenerateReport(session.id);
       setReport(rep.report);
       setNotice("Session ended. A draft report is ready for review.");
-      void careAudit().then((a) => setAudit(a.audit));
+      void careAudit().then((a) => setAudit(a.audit)).catch(() => undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not end the session.");
     } finally {
@@ -610,6 +611,9 @@ export default function CareDashboard() {
           onLoadAsr={loadAsr}
           onLoadLlm={loadLlm}
           onExit={() => {
+            sinceEventRef.current = 0;
+            sinceTranscriptRef.current = 0;
+            greetedRef.current = false;
             setSession(null);
             void refreshLists();
           }}

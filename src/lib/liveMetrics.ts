@@ -8,6 +8,7 @@ export function newestMetrics(
   const entries = Object.values(map);
   if (entries.length === 0) return null;
   let best = entries[0];
+  if (!best) return null;
   let bestAt = best?.lastSeen ? Date.parse(best.lastSeen) : -Infinity;
   for (let i = 1; i < entries.length; i += 1) {
     const m = entries[i];
