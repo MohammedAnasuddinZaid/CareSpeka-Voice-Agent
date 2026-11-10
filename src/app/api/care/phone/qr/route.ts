@@ -10,7 +10,7 @@ const SESSION_RE = /^[A-Z0-9_-]{3,32}$/i;
 /**
  * Returns a QR code and absolute link for the free browser call
  * (`/care/phone`). The same capability rules as /api/care/portal apply: a nurse
- * cookie, the QR pair token, or an unregistered demo session.
+ * cookie or the patient's QR pair token.
  */
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);

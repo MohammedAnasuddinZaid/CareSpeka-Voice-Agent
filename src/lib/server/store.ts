@@ -228,6 +228,7 @@ type RedisLike = {
   hgetall: (key: string) => Promise<Record<string, unknown>>;
   hdel: (key: string, fields: string[]) => Promise<unknown>;
   expire: (key: string, seconds: number) => Promise<unknown>;
+  eval: (script: string, keys: string[], args: (string | number)[]) => Promise<unknown>;
 };
 
 function redisKey(session: string): { entries: string; metrics: string; vitals: string; replies: string } {
@@ -252,6 +253,41 @@ async function touchRegistry(redis: RedisLike, session: string, now: number): Pr
   } catch {}
 }
 
+/**
+ * Atomically reserve the next server timestamp for a session.
+ *
+ * `Date.now()` alone is not unique: two gesture/status writes in the same
+ * millisecond get the same zset score, and a client holding `since` equal to
+ * that millisecond will never see the second one (`score > since`). The Lua
+ * script reads the last reserved value, returns max(now, last + 1) and stores
+ * it, so every write across every serverless instance has a strictly
+ * increasing cursor while staying close to wall-clock milliseconds.
+ */
+const NEXT_SERVER_TIME_SCRIPT = `
+local last = tonumber(redis.call("GET", KEYS[1]) or "0")
+local now = tonumber(ARGV[1])
+local nextAt = now
+if nextAt <= last then nextAt = last + 1 end
+redis.call("SET", KEYS[1], tostring(nextAt), "PX", tonumber(ARGV[2]))
+return nextAt
+`;
+
+async function nextRedisServerTime(redis: RedisLike, session: string, now: number): Promise<number> {
+  try {
+    const raw = await redis.eval(NEXT_SERVER_TIME_SCRIPT, [`cs:${session}:clock`], [
+      now,
+      REDIS_TTL_SECONDS * 1000,
+    ]);
+    const value = Number(raw);
+    return Number.isFinite(value) && value > 0 ? value : now;
+  } catch {
+    // If EVAL is unavailable the write still proceeds; the per-connection
+    // sent-id memory in /api/stream covers same-millisecond bursts until the
+    // next wall-clock millisecond.
+    return now;
+  }
+}
+
 async function createRedisDriver(): Promise<SessionStore> {
   const mod = await import("@upstash/redis");
   // One controlled cast at the IO boundary — we only use the four commands below.
@@ -265,6 +301,7 @@ async function createRedisDriver(): Promise<SessionStore> {
 
     async appendEntry(session: string, entry: Omit<GestureLogEntry, "serverTime">): Promise<StoredEntry> {
       const now = Date.now();
+      const serverTime = await nextRedisServerTime(redis, session, now);
       const k = redisKey(session);
       // Idempotency: if this id already exists, keep its lifecycle progress and
       // refresh the member instead of appending a second stale-status copy.
@@ -279,8 +316,8 @@ async function createRedisDriver(): Promise<SessionStore> {
         }
         await redis.zrem(k.entries, existing.member);
       }
-      const stored: StoredEntry = { ...entry, serverTime: now, status };
-      await redis.zadd(k.entries, { score: now, member: JSON.stringify(stored) });
+      const stored: StoredEntry = { ...entry, serverTime, status };
+      await redis.zadd(k.entries, { score: serverTime, member: JSON.stringify(stored) });
       // Enforce the same cap the memory driver has (zset grows otherwise).
       const count = await redis.zcard(k.entries).catch(() => 0);
       if (count > MAX_ENTRIES) {
@@ -328,7 +365,7 @@ async function createRedisDriver(): Promise<SessionStore> {
       if (!found) return;
       const { stored, member } = found;
       if (STATUS_RANK[status] <= STATUS_RANK[stored.status] && status !== "resolve") return;
-      const now = Date.now();
+      const now = await nextRedisServerTime(redis, session, Date.now());
       const updated: StoredEntry = { ...stored, status, serverTime: now };
       if (status === "acknowledge") { updated.acknowledged = true; updated.acknowledgedAt = now; }
       else if (status === "escalate") { updated.escalated = true; updated.escalatedAt = now; }
@@ -336,6 +373,7 @@ async function createRedisDriver(): Promise<SessionStore> {
       const k = redisKey(session);
       await redis.zrem(k.entries, member).catch(() => {});
       await redis.zadd(k.entries, { score: now, member: JSON.stringify(updated) });
+      await redis.expire(k.entries, REDIS_TTL_SECONDS);
     }
 
     async setMetrics(session: string, deviceId: string, metrics: PatientMetrics): Promise<void> {

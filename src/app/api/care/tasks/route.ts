@@ -20,6 +20,7 @@ export async function PATCH(req: NextRequest) {
   if (!body?.id || (body.status !== "open" && body.status !== "done")) {
     return fail("A task id and status are required.", 400);
   }
-  await setTaskStatus(body.id, body.status);
+  const updated = await setTaskStatus(body.id, body.status);
+  if (!updated) return fail("Task not found.", 404);
   return ok({ tasks: await listTasks() });
 }

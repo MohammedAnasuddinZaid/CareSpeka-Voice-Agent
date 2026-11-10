@@ -7,9 +7,11 @@ import {
   findSessionByJoinToken,
   findSessionByParticipantToken,
   getPatient,
+  getSessionLoose,
+  joinSessionAtomic,
   linkParticipantToken,
   listMessages,
-  updateSession,
+  unlinkParticipantToken,
 } from "@/lib/care/repo";
 import { hashToken, newToken } from "@/lib/care/crypto";
 import { fail, ok, readBody } from "@/lib/care/http";
@@ -98,7 +100,15 @@ export async function POST(req: NextRequest) {
   const name = (body.name || "").trim().slice(0, 80) || "Patient";
   const now = new Date().toISOString();
 
-  const updated = await updateSession(session.id, {
+  // Index the token before claiming the slot. If the claim loses the race the
+  // index entry is removed again; `findSessionByParticipantToken` also verifies
+  // the session hash, so a stray entry can never authenticate.
+  await linkParticipantToken(session.id, participantToken);
+
+  // Atomic compare-and-set on `joinedAt`. Two simultaneous joins now produce
+  // exactly one winner; the loser gets a deterministically cleaned-up token and
+  // a 409/410 instead of silently invalidating the winner's token.
+  const updated = await joinSessionAtomic(session.id, {
     status: "active",
     joinedAt: session.joinedAt ?? now,
     startedAt: session.startedAt ?? now,
@@ -106,9 +116,17 @@ export async function POST(req: NextRequest) {
     participantTokenHash: hashToken(participantToken),
   });
 
-  // Index the token so this patient can authenticate later API calls. Only the
-  // hash is ever persisted; the raw token lives in the patient's browser only.
-  await linkParticipantToken(session.id, participantToken);
+  if (!updated) {
+    await unlinkParticipantToken(participantToken).catch(() => undefined);
+    const latest = (await getSessionLoose(session.id)) ?? session;
+    if (latest.status === "expired") {
+      return fail("This joining link has expired. Ask the nurse to generate a new one.", 410);
+    }
+    if (latest.status === "ended") {
+      return fail("This care session has already ended.", 410);
+    }
+    return fail("Someone has already joined this session. Ask the nurse for a new link.", 409);
+  }
 
   await appendEvent(session.id, "session.joined", "patient", { name });
   await appendEvent(session.id, "participant.connected", "patient", { });

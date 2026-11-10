@@ -24,6 +24,15 @@ export interface KVDriver {
   readonly persistent: boolean;
   getDoc(key: string): Promise<unknown | null>;
   setDoc(key: string, value: unknown): Promise<void>;
+  /** Set only when the key is absent. Returns true when this call wrote it. */
+  setDocIfAbsent(key: string, value: unknown): Promise<boolean>;
+  /** Atomically add to a numeric counter and return the new value. */
+  incr(key: string, by?: number): Promise<number>;
+  /**
+   * Atomically read-modify-write one document. The mutator must be synchronous
+   * and return `null` to abort without writing (used for compare-and-set).
+   */
+  mutateDoc<T>(key: string, mutate: (current: T | null) => T | null): Promise<T | null>;
   appendList(key: string, value: unknown, cap?: number): Promise<number>;
   getList(key: string, from?: number): Promise<unknown[]>;
   setList(key: string, values: unknown[]): Promise<void>;
@@ -45,6 +54,26 @@ class MemoryDriver implements KVDriver {
   }
   async setDoc(key: string, value: unknown) {
     this.docs.set(key, value);
+  }
+  async setDocIfAbsent(key: string, value: unknown) {
+    if (this.docs.has(key) || this.lists.has(key)) return false;
+    this.docs.set(key, value);
+    return true;
+  }
+  async incr(key: string, by = 1) {
+    const current = Number(this.docs.get(key) ?? 0);
+    const next = (Number.isFinite(current) ? current : 0) + by;
+    this.docs.set(key, next);
+    return next;
+  }
+  async mutateDoc<T>(key: string, mutate: (current: T | null) => T | null): Promise<T | null> {
+    // JavaScript runs this critical section without yielding: read, mutate and
+    // write happen in one tick, so concurrent requests cannot interleave.
+    const current = (this.docs.get(key) ?? null) as T | null;
+    const next = mutate(current);
+    if (next === null) return null;
+    this.docs.set(key, next);
+    return next;
   }
   async appendList(key: string, value: unknown, cap = 5000) {
     const list = this.lists.get(key) ?? [];
@@ -124,6 +153,36 @@ class FileDriver implements KVDriver {
       await this.write(data);
     });
   }
+  async setDocIfAbsent(key: string, value: unknown) {
+    return this.run(async () => {
+      const data = await this.read();
+      if (key in data.docs || key in data.lists) return false;
+      data.docs[key] = value;
+      await this.write(data);
+      return true;
+    });
+  }
+  async incr(key: string, by = 1) {
+    return this.run(async () => {
+      const data = await this.read();
+      const current = Number(data.docs[key] ?? 0);
+      const next = (Number.isFinite(current) ? current : 0) + by;
+      data.docs[key] = next;
+      await this.write(data);
+      return next;
+    });
+  }
+  async mutateDoc<T>(key: string, mutate: (current: T | null) => T | null): Promise<T | null> {
+    return this.run(async () => {
+      const data = await this.read();
+      const current = (data.docs[key] ?? null) as T | null;
+      const next = mutate(current);
+      if (next === null) return null;
+      data.docs[key] = next;
+      await this.write(data);
+      return next;
+    });
+  }
   async appendList(key: string, value: unknown, cap = 5000) {
     return this.run(async () => {
       const data = await this.read();
@@ -161,11 +220,16 @@ class FileDriver implements KVDriver {
 
 interface RedisLike {
   get(key: string): Promise<unknown>;
-  set(key: string, value: unknown): Promise<unknown>;
+  set(key: string, value: unknown, opts?: { nx?: boolean; px?: number }): Promise<unknown>;
+  incrby(key: string, by: number): Promise<number>;
   rpush(key: string, ...values: unknown[]): Promise<number>;
   lrange(key: string, start: number, stop: number): Promise<unknown[]>;
   ltrim(key: string, start: number, stop: number): Promise<unknown>;
   del(key: string): Promise<unknown>;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 class RedisDriver implements KVDriver {
@@ -174,10 +238,53 @@ class RedisDriver implements KVDriver {
   constructor(private redis: RedisLike) {}
 
   async getDoc(key: string) {
-    return (await this.redis.get(key)) ?? null;
+    try {
+      return (await this.redis.get(key)) ?? null;
+    } catch {
+      // A malformed value or a transient REST failure must not take the whole
+      // request down; callers treat this as "missing" and regenerate state.
+      return null;
+    }
   }
   async setDoc(key: string, value: unknown) {
     await this.redis.set(key, value);
+  }
+  async setDocIfAbsent(key: string, value: unknown) {
+    const res = await this.redis.set(key, value, { nx: true });
+    return res !== null && res !== undefined;
+  }
+  async incr(key: string, by = 1) {
+    return this.redis.incrby(key, by);
+  }
+  async mutateDoc<T>(key: string, mutate: (current: T | null) => T | null): Promise<T | null> {
+    // Upstash REST has no WATCH/MULTI transaction primitive exposed through the
+    // driver interface, so guard the read-modify-write with a short-lived
+    // distributed lock. The mutation itself runs in well under a millisecond.
+    const lockKey = `${key}:__mutate_lock`;
+    const token = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    let locked = false;
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      const got = await this.redis.set(lockKey, token, { nx: true, px: 5000 });
+      if (got !== null && got !== undefined) {
+        locked = true;
+        break;
+      }
+      await sleep(10 + Math.min(attempt, 20) * 3);
+    }
+    if (!locked) throw new Error("Care store is busy; please retry.");
+    try {
+      const current = (await this.redis.get(key)) as T | null;
+      const next = mutate(current);
+      if (next === null) return null;
+      await this.redis.set(key, next);
+      return next;
+    } finally {
+      try {
+        if ((await this.redis.get(lockKey)) === token) await this.redis.del(lockKey);
+      } catch {
+        // The lock expires on its own (5s) if the release call fails.
+      }
+    }
   }
   async appendList(key: string, value: unknown, cap = 5000) {
     const len = await this.redis.rpush(key, value);
@@ -185,7 +292,12 @@ class RedisDriver implements KVDriver {
     return len;
   }
   async getList(key: string, from = 0) {
-    return this.redis.lrange(key, from, -1);
+    try {
+      const list = await this.redis.lrange(key, from, -1);
+      return Array.isArray(list) ? list : [];
+    } catch {
+      return [];
+    }
   }
   async setList(key: string, values: unknown[]) {
     await this.redis.del(key);
@@ -248,9 +360,12 @@ export function resetDriverForTests(): void {
 const K = {
   session: (id: string) => `care:session:${id}`,
   sessionIndex: "care:session:index",
+  /** Monotonic event/transcript sequence counter for one session. */
+  sessionSeq: (id: string) => `care:session:${id}:seq`,
   events: (id: string) => `care:session:${id}:events`,
   transcript: (id: string) => `care:session:${id}:transcript`,
   signal: (id: string, to: string) => `care:session:${id}:signal:${to}`,
+  signalSeq: (id: string, to: string) => `care:session:${id}:signal-seq:${to}`,
   report: (id: string) => `care:report:${id}`,
   reportIndex: "care:report:index",
   audit: "care:audit",
@@ -272,6 +387,8 @@ const K = {
   login: (hash: string) => `care:login:${hash}`,
   joinToken: (hash: string) => `care:jointoken:${hash}`,
   participant: (hash: string) => `care:participant:${hash}`,
+  /** Persisted QR pairing token (uppercase session key), survives restarts. */
+  pair: (session: string) => `care:pair:${session}`,
 };
 
 export { K as CareKeys };

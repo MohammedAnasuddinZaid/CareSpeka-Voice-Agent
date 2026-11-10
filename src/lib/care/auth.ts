@@ -84,7 +84,16 @@ function cookieValue(req: NextRequest, name: string): string | null {
   if (!raw) return null;
   for (const part of raw.split(";")) {
     const [k, ...v] = part.trim().split("=");
-    if (k === name) return decodeURIComponent(v.join("="));
+    if (k === name) {
+      const value = v.join("=");
+      // A malformed percent escape in a cookie must not throw a 500 from every
+      // route that reads the nurse session.
+      try {
+        return decodeURIComponent(value);
+      } catch {
+        return value;
+      }
+    }
   }
   return null;
 }
@@ -116,5 +125,6 @@ export function buildSessionCookie(token: string): string {
 }
 
 export function clearSessionCookie(): string {
-  return `${NURSE_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  return `${NURSE_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`;
 }

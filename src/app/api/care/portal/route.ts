@@ -22,10 +22,8 @@ export const dynamic = "force-dynamic";
  *
  * Access control is layered:
  *   1. a signed-in nurse cookie always works;
- *   2. a valid `pair` token from the QR works (proves the caller scanned it);
- *   3. if no pair token was ever registered for the session — e.g. the
- *      serverless in-memory registry was recycled — the session id itself is
- *      the capability, exactly like /api/sync and /api/stream.
+ *   2. a valid `pair` token from the QR works (proves the caller scanned it).
+ * A bare session id is never a capability.
  */
 
 const SESSION_RE = /^[A-Z0-9_-]{3,32}$/i;

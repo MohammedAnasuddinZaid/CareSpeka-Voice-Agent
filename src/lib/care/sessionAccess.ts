@@ -11,7 +11,7 @@
  */
 import type { NextRequest } from "next/server";
 import { nurseFromRequest } from "./auth";
-import { verifyPairToken } from "@/lib/server/pairing";
+import { verifyPairTokenPersistent } from "@/lib/server/pairing";
 
 export interface SessionActor {
   role: string;
@@ -36,6 +36,6 @@ export async function authorizeSession(
       actor: { role: nurse.role, userId: nurse.userId, displayName: nurse.displayName },
     };
   }
-  if (pair && verifyPairToken(session, pair)) return { allowed: true };
+  if (pair && (await verifyPairTokenPersistent(session, pair))) return { allowed: true };
   return { allowed: false };
 }

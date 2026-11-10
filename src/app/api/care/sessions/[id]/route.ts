@@ -5,7 +5,7 @@ import {
   endSession,
   expireIfStale,
   findSessionByParticipantToken,
-  getSession,
+  getSessionLoose,
   listEvents,
   listTasks,
   listTranscript,
@@ -21,7 +21,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
-  let session = await getSession(id);
+  let session = await getSessionLoose(id);
   if (!session) return fail("Session not found.", 404);
   session = await expireIfStale(session);
 
@@ -31,7 +31,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   if (!isNurse) {
     const token = await participantFromRequest(req);
     const viaParticipant = token ? await findSessionByParticipantToken(token) : null;
-    if (!viaParticipant || viaParticipant.id !== id) return unauthorized("This session is not available to you.");
+    if (!viaParticipant || viaParticipant.id !== session.id) return unauthorized("This session is not available to you.");
   }
 
   const url = new URL(req.url);
@@ -39,8 +39,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   const sinceTranscript = Number(url.searchParams.get("sinceTranscript") || "0");
 
   const [events, transcript, patient] = await Promise.all([
-    listEvents(id, Number.isFinite(sinceEvent) ? sinceEvent : 0),
-    listTranscript(id, Number.isFinite(sinceTranscript) ? sinceTranscript : 0),
+    listEvents(session.id, Number.isFinite(sinceEvent) ? sinceEvent : 0),
+    listTranscript(session.id, Number.isFinite(sinceTranscript) ? sinceTranscript : 0),
     getPatient(session.patientId),
   ]);
 
@@ -68,34 +68,36 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     title?: string;
     status?: string;
   }>(req);
-  const session = await getSession(id);
+  const session = await getSessionLoose(id);
   if (!session) return fail("Session not found.", 404);
 
   switch (body?.action) {
     case "end": {
-      const ended = await endSession(id, body.reason || "nurse_ended");
+      const ended = await endSession(session.id, body.reason || "nurse_ended");
+      if (!ended) return fail("Session not found.", 404);
       await appendAudit({
         actorRole: nurse.role,
         actorId: nurse.userId,
         action: "care.session_ended",
-        sessionId: id,
+        sessionId: session.id,
         patientId: session.patientId,
         detail: { reason: body.reason || "nurse_ended" },
       });
-      const view = await sessionView(ended!, { forNurse: true, baseUrl: publicBaseUrl(req) });
+      const view = await sessionView(ended, { forNurse: true, baseUrl: publicBaseUrl(req) });
       return ok({ session: view });
     }
     case "escalation.acknowledged": {
-      await updateSession(id, { escalated: false });
-      await appendEvent(id, "escalation.acknowledged", "nurse", { by: nurse.displayName });
+      await updateSession(session.id, { escalated: false });
+      await appendEvent(session.id, "escalation.acknowledged", "nurse", { by: nurse.displayName });
       await appendAudit({
         actorRole: nurse.role,
         actorId: nurse.userId,
         action: "care.escalation_acknowledged",
-        sessionId: id,
+        sessionId: session.id,
         patientId: session.patientId,
       });
-      const view = await sessionView((await getSession(id))!, { forNurse: true, baseUrl: publicBaseUrl(req) });
+      const latest = (await getSessionLoose(session.id)) ?? session;
+      const view = await sessionView(latest, { forNurse: true, baseUrl: publicBaseUrl(req) });
       return ok({ session: view });
     }
     case "task.create": {
@@ -103,16 +105,16 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
       if (!title) return fail("Task title is required.", 400);
       const task = await createTask({
         patientId: session.patientId,
-        sessionId: id,
+        sessionId: session.id,
         title: title.slice(0, 200),
         createdBy: nurse.displayName,
       });
-      await appendEvent(id, "task.created", "nurse", { taskId: task.id, title: task.title });
+      await appendEvent(session.id, "task.created", "nurse", { taskId: task.id, title: task.title });
       await appendAudit({
         actorRole: nurse.role,
         actorId: nurse.userId,
         action: "care.task_created",
-        sessionId: id,
+        sessionId: session.id,
         patientId: session.patientId,
         detail: { taskId: task.id },
       });

@@ -3,7 +3,7 @@ import {
   appendEvent,
   appendTranscript,
   findSessionByParticipantToken,
-  getSession,
+  getSessionLoose,
   listTranscript,
   updateSession,
 } from "@/lib/care/repo";
@@ -22,14 +22,17 @@ export async function GET(req: NextRequest) {
   if (!sessionId) return fail("A session is required.", 400);
   const since = Number(url.searchParams.get("since") || "0");
 
+  const session = await getSessionLoose(sessionId);
+  if (!session) return fail("Session not found.", 404);
+
   const nurse = await nurseFromRequest(req);
   if (!nurse) {
     const token = await participantFromRequest(req);
-    const session = token ? await findSessionByParticipantToken(token) : null;
-    if (!session || session.id !== sessionId) return unauthorized();
+    const viaParticipant = token ? await findSessionByParticipantToken(token) : null;
+    if (!viaParticipant || viaParticipant.id !== session.id) return unauthorized();
   }
 
-  const transcript = await listTranscript(sessionId, Number.isFinite(since) ? since : 0);
+  const transcript = await listTranscript(session.id, Number.isFinite(since) ? since : 0);
   return ok({ transcript });
 }
 
@@ -49,7 +52,7 @@ export async function POST(req: NextRequest) {
   const text = (body?.text ?? "").trim();
   if (!text) return fail("Empty transcript text.", 400);
 
-  const session = await getSession(sessionId);
+  const session = await getSessionLoose(sessionId);
   if (!session) return fail("Session not found.", 404);
   if (session.status === "ended") return fail("This session has ended.", 410);
 
@@ -58,11 +61,11 @@ export async function POST(req: NextRequest) {
     // A patient may only append their own speech, and only to their session.
     const token = await participantFromRequest(req);
     const viaParticipant = token ? await findSessionByParticipantToken(token) : null;
-    if (!viaParticipant || viaParticipant.id !== sessionId) return unauthorized();
+    if (!viaParticipant || viaParticipant.id !== session.id) return unauthorized();
     if (role !== "patient") return unauthorized("Patients may only submit their own speech.");
   }
 
-  const entry = await appendTranscript(sessionId, {
+  const entry = await appendTranscript(session.id, {
     role,
     text,
     engine: body?.engine?.slice(0, 80),
@@ -76,8 +79,8 @@ export async function POST(req: NextRequest) {
     const flags = extractSymptoms(text).filter((s) => s.redFlag);
     if (flags.length) {
       escalated = true;
-      await updateSession(sessionId, { escalated: true });
-      await appendEvent(sessionId, "escalation.created", "system", {
+      await updateSession(session.id, { escalated: true });
+      await appendEvent(session.id, "escalation.created", "system", {
         symptoms: flags.map((f) => f.label),
         source: "server-transcript-scan",
       });

@@ -4,7 +4,7 @@ import {
   appendEvent,
   getPatient,
   getReportBySession,
-  getSession,
+  getSessionLoose,
   getTranscriptRaw,
   listReports,
   putReport,
@@ -31,7 +31,8 @@ export async function GET(req: NextRequest) {
     return report ? ok({ report }) : fail("Report not found.", 404);
   }
   if (sessionId) {
-    const report = await getReportBySession(sessionId);
+    const session = await getSessionLoose(sessionId);
+    const report = await getReportBySession(session?.id ?? sessionId);
     return ok({ report });
   }
   const reports = await listReports(patientId ?? undefined);
@@ -46,15 +47,15 @@ export async function POST(req: NextRequest) {
   const sessionId = body?.sessionId?.trim();
   if (!sessionId) return fail("A session is required.", 400);
 
-  const session = await getSession(sessionId);
+  const session = await getSessionLoose(sessionId);
   if (!session) return fail("Session not found.", 404);
 
   if (!body?.regenerate) {
-    const existing = await getReportBySession(sessionId);
+    const existing = await getReportBySession(session.id);
     if (existing) return ok({ report: existing, existing: true });
   }
 
-  const [patient, entries] = await Promise.all([getPatient(session.patientId), getTranscriptRaw(sessionId)]);
+  const [patient, entries] = await Promise.all([getPatient(session.patientId), getTranscriptRaw(session.id)]);
   if (!entries.length) {
     return fail("There is no conversation to report on yet.", 409);
   }
@@ -64,7 +65,7 @@ export async function POST(req: NextRequest) {
     (session.startedAt ? Math.max(0, Date.now() - Date.parse(session.startedAt)) : 0);
 
   const report = buildReport({
-    sessionId,
+    sessionId: session.id,
     patientId: session.patientId,
     patient,
     entries,
@@ -72,13 +73,13 @@ export async function POST(req: NextRequest) {
   });
 
   await putReport(report);
-  await updateSession(sessionId, { reportId: report.id });
-  await appendEvent(sessionId, "report.generated", "agent", { reportId: report.id });
+  await updateSession(session.id, { reportId: report.id });
+  await appendEvent(session.id, "report.generated", "agent", { reportId: report.id });
   await appendAudit({
     actorRole: nurse.role,
     actorId: nurse.userId,
     action: "care.report_generated",
-    sessionId,
+    sessionId: session.id,
     patientId: session.patientId,
     detail: { reportId: report.id },
   });

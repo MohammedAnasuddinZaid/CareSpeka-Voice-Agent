@@ -42,12 +42,14 @@ export function regeneratePairToken(sessionId: string): string {
   try {
     localStorage.setItem(TOKEN_PREFIX + sessionId, token);
   } catch {}
+  // Send the replacement token itself; the server persists and returns it.
+  // (Rotating server-side to a different random token used to leave the QR the
+  // patient sees out of sync with the stored pairing.)
   void fetch("/api/pair", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "rotate", session: sessionId }),
+    body: JSON.stringify({ action: "rotate", session: sessionId, pair: token }),
   }).catch(() => {});
-  registerPairToken(sessionId, token);
   return token;
 }
 

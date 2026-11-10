@@ -14,6 +14,7 @@ import type {
   CareReport,
   CareRole,
   CareSession,
+  CareSessionStatus,
   CareSignal,
   CareTask,
   CareTranscriptEntry,
@@ -23,6 +24,104 @@ import type {
   SessionPatientLink,
 } from "./types";
 import { ensureDemoSeed, ensurePatientRecordSeed } from "./seedDemo";
+
+// ---------------------------------------------------------------------------
+// runtime validation
+//
+// The memory/file drivers can contain hand-edited or legacy documents, and a
+// Redis value can be corrupted or written by an older build. Every value that
+// crosses the driver boundary is narrowed here, so one bad record cannot crash
+// a route with `undefined.filter is not a function` or a half-populated session.
+// ---------------------------------------------------------------------------
+
+const SESSION_STATUSES = new Set<CareSessionStatus>([
+  "created",
+  "waiting",
+  "active",
+  "ending",
+  "ended",
+  "expired",
+  "error",
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+}
+
+function asCareSession(value: unknown): CareSession | null {
+  if (!isRecord(value)) return null;
+  if (
+    typeof value.id !== "string" ||
+    typeof value.patientId !== "string" ||
+    typeof value.nurseId !== "string" ||
+    typeof value.nurseName !== "string" ||
+    typeof value.createdAt !== "string" ||
+    typeof value.status !== "string" ||
+    !SESSION_STATUSES.has(value.status as CareSessionStatus)
+  ) {
+    return null;
+  }
+  return value as unknown as CareSession;
+}
+
+function asClinicalPatient(value: unknown): ClinicalPatient | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.id !== "string" || typeof value.displayName !== "string") return null;
+  const out: Record<string, unknown> = { ...value };
+  for (const key of ["conditions", "medications", "allergies", "observations", "encounters"]) {
+    if (!Array.isArray(out[key])) out[key] = [];
+  }
+  return out as unknown as ClinicalPatient;
+}
+
+function asSessionLink(value: unknown): SessionPatientLink | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.sessionId !== "string" || typeof value.patientId !== "string") return null;
+  return value as unknown as SessionPatientLink;
+}
+
+function isCareEvent(value: unknown): value is CareEvent {
+  return isRecord(value) && typeof value.seq === "number" && typeof value.type === "string" && typeof value.at === "string";
+}
+
+function isTranscriptEntry(value: unknown): value is CareTranscriptEntry {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.seq === "number" &&
+    typeof value.role === "string" &&
+    typeof value.text === "string" &&
+    typeof value.at === "string"
+  );
+}
+
+function isCareSignal(value: unknown): value is CareSignal {
+  return isRecord(value) && typeof value.idx === "number" && typeof value.kind === "string" && typeof value.at === "string";
+}
+
+function isPatientMessage(value: unknown): value is PatientMessage {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.patientId === "string" &&
+    typeof value.text === "string" &&
+    typeof value.createdAt === "string"
+  );
+}
+
+function isPatientRecord(value: unknown): value is PatientRecord {
+  return isRecord(value) && typeof value.id === "string" && typeof value.patientId === "string";
+}
+
+/** Session-scoped auxiliary keys (links, metrics, pairing) use uppercase ids. */
+function sessionKey(id: string): string {
+  return id.trim().toUpperCase();
+}
+
 
 // ---------------------------------------------------------------------------
 // store info
@@ -46,7 +145,7 @@ async function ensurePatientsSeeded(): Promise<void> {
   }
 
   const seeded = await d.getDoc(K.patientSeeded);
-  const index = ((await d.getDoc(K.patientIndex)) as string[] | null) ?? [];
+  const index = stringArray(await d.getDoc(K.patientIndex));
   const version = Number((await d.getDoc(K.patientSeedVersion)) ?? 0) || 0;
 
   // First run: write the whole synthetic dataset.
@@ -65,7 +164,7 @@ async function ensurePatientsSeeded(): Promise<void> {
         nextIndex.delete(p.id);
         continue;
       }
-      const existing = (await d.getDoc(K.patient(p.id))) as ClinicalPatient | null;
+      const existing = asClinicalPatient(await d.getDoc(K.patient(p.id)));
       if (existing) {
         if (existing.synthetic) await d.setDoc(K.patient(p.id), p);
         nextIndex.add(p.id);
@@ -86,10 +185,10 @@ export async function listPatients(): Promise<ClinicalPatient[]> {
   await ensurePatientsSeeded();
   await ensureDemoSeed();
   const d = await getDriver();
-  const index = ((await d.getDoc(K.patientIndex)) as string[] | null) ?? [];
+  const index = stringArray(await d.getDoc(K.patientIndex));
   const out: ClinicalPatient[] = [];
   for (const id of index) {
-    const p = (await d.getDoc(K.patient(id))) as ClinicalPatient | null;
+    const p = asClinicalPatient(await d.getDoc(K.patient(id)));
     if (p) out.push(p);
   }
   return out.sort((a, b) => a.id.localeCompare(b.id));
@@ -98,7 +197,7 @@ export async function listPatients(): Promise<ClinicalPatient[]> {
 export async function getPatient(id: string): Promise<ClinicalPatient | null> {
   await ensurePatientsSeeded();
   const d = await getDriver();
-  const p = (await d.getDoc(K.patient(id))) as ClinicalPatient | null;
+  const p = asClinicalPatient(await d.getDoc(K.patient(id)));
   if (p) return p;
   if (await d.getDoc(K.patientDeleted(id))) return null;
   return getSeedPatient(id) ?? null;
@@ -121,11 +220,21 @@ export async function createPatient(input: {
 }): Promise<ClinicalPatient> {
   await ensurePatientsSeeded();
   const d = await getDriver();
-  const index = ((await d.getDoc(K.patientIndex)) as string[] | null) ?? [];
   const id = newId("pt");
+
+  // Reserve the index slot atomically so two nurses creating a patient at the
+  // same moment cannot overwrite each other's index (lost patient) or reuse an
+  // extension number.
+  let extension = "1001";
+  await d.mutateDoc<string[]>(K.patientIndex, (current) => {
+    const index = stringArray(current);
+    extension = String(1000 + index.length + 1);
+    return [...index, id].slice(-2000);
+  });
+
   const patient: ClinicalPatient = {
     id,
-    extension: String(1000 + index.length + 1),
+    extension,
     displayName: input.displayName.trim().slice(0, 120) || "Unnamed patient",
     age: input.age ?? null,
     sex: input.sex?.trim() || undefined,
@@ -141,8 +250,6 @@ export async function createPatient(input: {
     encounters: [],
   };
   await d.setDoc(K.patient(id), patient);
-  index.push(id);
-  await d.setDoc(K.patientIndex, index.slice(-2000));
   return patient;
 }
 
@@ -154,15 +261,15 @@ export async function createPatient(input: {
 export async function deletePatient(id: string): Promise<boolean> {
   await ensurePatientsSeeded();
   const d = await getDriver();
-  const patient = (await d.getDoc(K.patient(id))) as ClinicalPatient | null;
+  const patient = asClinicalPatient(await d.getDoc(K.patient(id)));
   if (!patient) return false;
 
   // remove their records
-  const recordIds = (await d.getList(K.recordIndex)) as string[];
+  const recordIds = stringArray(await d.getList(K.recordIndex));
   const keptRecordIds: string[] = [];
   for (const rid of recordIds) {
-    const rec = (await d.getDoc(K.record(rid))) as { patientId?: string } | null;
-    if (rec?.patientId === id) {
+    const rec = await d.getDoc(K.record(rid));
+    if (isRecord(rec) && rec.patientId === id) {
       await d.del(K.record(rid));
       continue;
     }
@@ -174,8 +281,9 @@ export async function deletePatient(id: string): Promise<boolean> {
   // Tombstone so demo reconciliation can never resurrect a patient the nurse
   // deliberately removed.
   await d.setDoc(K.patientDeleted(id), { at: isoNow() });
-  const index = ((await d.getDoc(K.patientIndex)) as string[] | null) ?? [];
-  await d.setDoc(K.patientIndex, index.filter((x) => x !== id));
+  await d.mutateDoc<string[]>(K.patientIndex, (current) => {
+    return stringArray(current).filter((x) => x !== id);
+  });
   return true;
 }
 
@@ -204,9 +312,11 @@ export async function createSession(input: {
   };
   await d.setDoc(K.session(session.id), session);
   await d.setDoc(K.joinToken(session.joinTokenHash), session.id);
-  const index = ((await d.getDoc(K.sessionIndex)) as string[] | null) ?? [];
-  index.push(session.id);
-  await d.setDoc(K.sessionIndex, index.slice(-500));
+  await d.mutateDoc<string[]>(K.sessionIndex, (current) => {
+    const index = stringArray(current);
+    if (!index.includes(session.id)) index.push(session.id);
+    return index.slice(-500);
+  });
   await appendEventInternal(session.id, "session.created", "nurse", { patientId: session.patientId });
   await appendEventInternal(session.id, "join.link_generated", "system", { expiresAt: session.joinExpiresAt });
   return { session: (await getSession(session.id))!, joinToken };
@@ -214,7 +324,7 @@ export async function createSession(input: {
 
 export async function getSession(id: string): Promise<CareSession | null> {
   const d = await getDriver();
-  return ((await d.getDoc(K.session(id))) as CareSession | null) ?? null;
+  return asCareSession(await d.getDoc(K.session(id)));
 }
 
 /**
@@ -233,10 +343,10 @@ export async function getSessionLoose(id: string): Promise<CareSession | null> {
 export async function listSessions(limit = 50): Promise<CareSession[]> {
   await ensureDemoSeed();
   const d = await getDriver();
-  const index = ((await d.getDoc(K.sessionIndex)) as string[] | null) ?? [];
+  const index = stringArray(await d.getDoc(K.sessionIndex));
   const out: CareSession[] = [];
   for (const id of index.slice(-limit).reverse()) {
-    const s = (await d.getDoc(K.session(id))) as CareSession | null;
+    const s = asCareSession(await d.getDoc(K.session(id)));
     if (s) out.push(s);
   }
   return out;
@@ -245,27 +355,53 @@ export async function listSessions(limit = 50): Promise<CareSession[]> {
 /** Find a waiting session by its human-typeable joining code. */
 export async function findSessionByJoinCode(code: string): Promise<CareSession | null> {
   const d = await getDriver();
-  const index = ((await d.getDoc(K.sessionIndex)) as string[] | null) ?? [];
+  const index = stringArray(await d.getDoc(K.sessionIndex));
   for (const id of [...index].reverse()) {
-    const s = (await d.getDoc(K.session(id))) as CareSession | null;
+    const s = asCareSession(await d.getDoc(K.session(id)));
     if (s && s.joinCode === code) return s;
   }
   return null;
 }
 
 export async function updateSession(id: string, patch: Partial<CareSession>): Promise<CareSession | null> {
-  const current = await getSession(id);
-  if (!current) return null;
-  const merged = { ...current, ...patch, id: current.id };
   const d = await getDriver();
-  await d.setDoc(K.session(id), merged);
-  return merged;
+  // Atomic read-modify-write: concurrent updates to different fields (a join
+  // setting joinedAt while the nurse ends the session, for example) must not
+  // overwrite each other.
+  return d.mutateDoc<CareSession>(K.session(id), (current) => {
+    if (!current) return null;
+    return { ...current, ...patch, id: current.id };
+  });
+}
+
+/**
+ * Claim the single participant slot for a session, atomically.
+ *
+ * Returns the updated session for exactly one caller. Everyone else gets
+ * `null` (already joined / ended / expired), which the join route turns into a
+ * 409/410. This closes the race where two concurrent POSTs both observed
+ * `joinedAt` unset and the second silently invalidated the first token.
+ */
+export async function joinSessionAtomic(
+  sessionId: string,
+  patch: Partial<CareSession>
+): Promise<CareSession | null> {
+  const d = await getDriver();
+  return d.mutateDoc<CareSession>(K.session(sessionId), (current) => {
+    if (!current) return null;
+    if (current.joinedAt) return null;
+    if (current.status === "ended" || current.status === "expired") return null;
+    if ((current.status === "waiting" || current.status === "created") && isExpired(current.joinExpiresAt)) {
+      return null;
+    }
+    return { ...current, ...patch, id: current.id };
+  });
 }
 
 export async function findSessionByJoinToken(raw: string): Promise<CareSession | null> {
   const d = await getDriver();
-  const id = (await d.getDoc(K.joinToken(hashToken(raw)))) as string | null;
-  if (!id) return null;
+  const id = await d.getDoc(K.joinToken(hashToken(raw)));
+  if (typeof id !== "string" || !id) return null;
   const session = await getSession(id);
   // A regenerated link changes joinTokenHash; the old token then no longer matches.
   if (!session || session.joinTokenHash !== hashToken(raw)) return null;
@@ -299,11 +435,17 @@ export async function linkParticipantToken(sessionId: string, raw: string): Prom
   await d.setDoc(K.participant(hashToken(raw)), sessionId);
 }
 
+/** Remove the index entry for a token that lost the join race. */
+export async function unlinkParticipantToken(raw: string): Promise<void> {
+  const d = await getDriver();
+  await d.del(K.participant(hashToken(raw)));
+}
+
 export async function findSessionByParticipantToken(raw: string): Promise<CareSession | null> {
   const d = await getDriver();
   const hash = hashToken(raw);
-  const id = (await d.getDoc(K.participant(hash))) as string | null;
-  if (!id) return null;
+  const id = await d.getDoc(K.participant(hash));
+  if (typeof id !== "string" || !id) return null;
   const session = await getSession(id);
   // Verify the stored hash still matches, so a re-join invalidates any earlier token.
   if (!session || session.participantTokenHash !== hash) return null;
@@ -312,21 +454,43 @@ export async function findSessionByParticipantToken(raw: string): Promise<CareSe
 
 /** Expire a session whose join window passed before anyone connected. */
 export async function expireIfStale(session: CareSession): Promise<CareSession> {
-  if ((session.status === "waiting" || session.status === "created") && isExpired(session.joinExpiresAt)) {
-    return (await updateSession(session.id, { status: "expired" })) ?? session;
+  if ((session.status !== "waiting" && session.status !== "created") || !isExpired(session.joinExpiresAt)) {
+    return session;
   }
-  return session;
+  const d = await getDriver();
+  // Re-check inside the atomic write: a join may have won the race between the
+  // caller's read and this update, and must not be overwritten as expired.
+  const updated = await d.mutateDoc<CareSession>(K.session(session.id), (current) => {
+    if (!current) return null;
+    if (current.status !== "waiting" && current.status !== "created") return null;
+    if (!isExpired(current.joinExpiresAt)) return null;
+    return { ...current, status: "expired" };
+  });
+  return updated ?? (await getSession(session.id)) ?? session;
 }
 
 export async function endSession(id: string, reason: string): Promise<CareSession | null> {
   const s = await getSession(id);
   if (!s) return null;
   if (s.status === "ended") return s;
+
+  const d = await getDriver();
   const endedAt = isoNow();
-  const started = s.startedAt ? Date.parse(s.startedAt) : Date.parse(s.createdAt);
-  const durationMs = Math.max(0, Date.now() - started);
-  const updated = await updateSession(id, { status: "ended", endedAt, durationMs, endReason: reason });
-  await appendEventInternal(id, "session.ended", "nurse", { reason, durationMs });
+  let changed = false;
+  // Decide the duration inside the atomic update so a concurrent join that sets
+  // startedAt cannot be lost.
+  const updated = await d.mutateDoc<CareSession>(K.session(id), (current) => {
+    if (!current) return null;
+    if (current.status === "ended") return current;
+    changed = true;
+    const started = current.startedAt ? Date.parse(current.startedAt) : Date.parse(current.createdAt);
+    const durationMs = Math.max(0, Date.now() - (Number.isFinite(started) ? started : Date.now()));
+    return { ...current, status: "ended", endedAt, durationMs, endReason: reason };
+  });
+  if (!updated) return null;
+  if (changed) {
+    await appendEventInternal(id, "session.ended", "nurse", { reason, durationMs: updated.durationMs ?? 0 });
+  }
   return updated;
 }
 
@@ -335,10 +499,14 @@ export async function endSession(id: string, reason: string): Promise<CareSessio
 // ---------------------------------------------------------------------------
 
 async function nextSeq(sessionId: string): Promise<number> {
-  const s = await getSession(sessionId);
-  const seq = (s?.seq ?? 0) + 1;
-  if (s) await updateSession(sessionId, { seq });
-  return seq;
+  const d = await getDriver();
+  const key = K.sessionSeq(sessionId);
+  // One-time migration: seeded/legacy sessions carry seq on the session row but
+  // have no counter yet. INCR alone would restart at 1 and make existing events
+  // invisible to `sinceSeq` clients. SET NX seeds exactly once across instances.
+  const session = await getSession(sessionId);
+  await d.setDocIfAbsent(key, Math.max(0, session?.seq ?? 0));
+  return d.incr(key, 1);
 }
 
 async function appendEventInternal(
@@ -357,8 +525,8 @@ export const appendEvent = appendEventInternal;
 
 export async function listEvents(sessionId: string, sinceSeq = 0): Promise<CareEvent[]> {
   const d = await getDriver();
-  const all = (await d.getList(K.events(sessionId))) as CareEvent[];
-  return all.filter((e) => e.seq > sinceSeq);
+  const all = await d.getList(K.events(sessionId));
+  return all.filter(isCareEvent).filter((e) => e.seq > sinceSeq);
 }
 
 // ---------------------------------------------------------------------------
@@ -389,13 +557,14 @@ export async function appendTranscript(
 
 export async function listTranscript(sessionId: string, sinceSeq = 0): Promise<CareTranscriptEntry[]> {
   const d = await getDriver();
-  const all = (await d.getList(K.transcript(sessionId))) as CareTranscriptEntry[];
-  return all.filter((t) => t.seq > sinceSeq);
+  const all = await d.getList(K.transcript(sessionId));
+  return all.filter(isTranscriptEntry).filter((t) => t.seq > sinceSeq);
 }
 
 export async function getTranscriptRaw(sessionId: string): Promise<CareTranscriptEntry[]> {
   const d = await getDriver();
-  return (await d.getList(K.transcript(sessionId))) as CareTranscriptEntry[];
+  const all = await d.getList(K.transcript(sessionId));
+  return all.filter(isTranscriptEntry);
 }
 
 // ---------------------------------------------------------------------------
@@ -408,16 +577,25 @@ export async function pushSignal(
   signal: Omit<CareSignal, "idx" | "at">
 ): Promise<CareSignal> {
   const d = await getDriver();
-  const list = (await d.getList(K.signal(sessionId, to))) as CareSignal[];
-  const stored: CareSignal = { ...signal, idx: list.length, at: isoNow() };
+  const counterKey = K.signalSeq(sessionId, to);
+  // Seed the counter from the existing list once (legacy sessions have signals
+  // but no counter). Thereafter INCR guarantees unique, gap-free indexes even
+  // when two peers post at the same instant.
+  const current = await d.getDoc(counterKey);
+  if (typeof current !== "number" || !Number.isFinite(current)) {
+    const existing = await d.getList(K.signal(sessionId, to));
+    await d.setDocIfAbsent(counterKey, existing.length);
+  }
+  const idx = (await d.incr(counterKey, 1)) - 1;
+  const stored: CareSignal = { ...signal, idx, at: isoNow() };
   await d.appendList(K.signal(sessionId, to), stored, 1000);
   return stored;
 }
 
 export async function listSignals(sessionId: string, to: "nurse" | "patient", sinceIdx = 0): Promise<CareSignal[]> {
   const d = await getDriver();
-  const all = (await d.getList(K.signal(sessionId, to))) as CareSignal[];
-  return all.filter((s) => s.idx >= sinceIdx);
+  const all = await d.getList(K.signal(sessionId, to));
+  return all.filter(isCareSignal).filter((s) => s.idx >= sinceIdx);
 }
 
 // ---------------------------------------------------------------------------
@@ -427,9 +605,11 @@ export async function listSignals(sessionId: string, to: "nurse" | "patient", si
 export async function putReport(report: CareReport): Promise<void> {
   const d = await getDriver();
   await d.setDoc(K.report(report.id), report);
-  const index = ((await d.getDoc(K.reportIndex)) as string[] | null) ?? [];
-  if (!index.includes(report.id)) index.push(report.id);
-  await d.setDoc(K.reportIndex, index.slice(-1000));
+  await d.mutateDoc<string[]>(K.reportIndex, (current) => {
+    const index = stringArray(current);
+    if (!index.includes(report.id)) index.push(report.id);
+    return index.slice(-1000);
+  });
 }
 
 export async function getReport(id: string): Promise<CareReport | null> {
@@ -439,7 +619,7 @@ export async function getReport(id: string): Promise<CareReport | null> {
 
 export async function getReportBySession(sessionId: string): Promise<CareReport | null> {
   const d = await getDriver();
-  const index = ((await d.getDoc(K.reportIndex)) as string[] | null) ?? [];
+  const index = stringArray(await d.getDoc(K.reportIndex));
   for (const id of [...index].reverse()) {
     const r = (await d.getDoc(K.report(id))) as CareReport | null;
     if (r?.sessionId === sessionId) return r;
@@ -449,7 +629,7 @@ export async function getReportBySession(sessionId: string): Promise<CareReport 
 
 export async function listReports(patientId?: string): Promise<CareReport[]> {
   const d = await getDriver();
-  const index = ((await d.getDoc(K.reportIndex)) as string[] | null) ?? [];
+  const index = stringArray(await d.getDoc(K.reportIndex));
   const out: CareReport[] = [];
   for (const id of [...index].reverse()) {
     const r = (await d.getDoc(K.report(id))) as CareReport | null;
@@ -490,22 +670,26 @@ export async function createTask(input: Omit<CareTask, "id" | "createdAt" | "sta
 
 export async function listTasks(patientId?: string): Promise<CareTask[]> {
   const d = await getDriver();
-  const all = (await d.getList(K.tasks)) as CareTask[];
+  const all = await d.getList(K.tasks);
   // Keep only the most recent version of each task id.
   const byId = new Map<string, CareTask>();
-  for (const t of all) byId.set(t.id, t);
+  for (const raw of all) {
+    if (!isRecord(raw) || typeof raw.id !== "string" || typeof raw.createdAt !== "string") continue;
+    byId.set(raw.id, raw as unknown as CareTask);
+  }
   const latest = [...byId.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   return patientId ? latest.filter((t) => t.patientId === patientId) : latest;
 }
 
-export async function setTaskStatus(id: string, status: "open" | "done"): Promise<void> {
+export async function setTaskStatus(id: string, status: "open" | "done"): Promise<boolean> {
   // Tasks are stored as an append-only log; a status change appends the full
   // updated record, and readers keep the most recent version per id.
   const d = await getDriver();
-  const all = (await d.getList(K.tasks)) as CareTask[];
-  const latest = [...all].reverse().find((t) => t.id === id);
-  if (!latest) return;
+  const all = await d.getList(K.tasks);
+  const latest = [...all].reverse().find((t): t is CareTask => isRecord(t) && t.id === id);
+  if (!latest) return false;
   await d.appendList(K.tasks, { ...latest, status }, 2000);
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -533,21 +717,51 @@ export async function addMessage(input: {
   return message;
 }
 
-/** Newest first. Optionally limited to one patient. */
+/** Newest first. Optionally limited to one patient. Deduped by id: a read
+ *  marker appends a second copy of the same message, and returning both made
+ *  every read message appear twice in the UI. */
 export async function listMessages(patientId?: string): Promise<PatientMessage[]> {
   const d = await getDriver();
-  const all = (await d.getList(K.messages)) as PatientMessage[];
-  const filtered = patientId ? all.filter((m) => m.patientId === patientId) : all;
-  return [...filtered].reverse();
+  const all = await d.getList(K.messages);
+  // Keep the most recent version per id, but remember the position of its
+  // first append: a read marker updates content, it does not re-post the
+  // message. Ties on createdAt (same millisecond) fall back to append order so
+  // a message can never appear older than one written before it.
+  const byId = new Map<string, { message: PatientMessage; index: number }>();
+  let index = 0;
+  for (const raw of all) {
+    if (!isPatientMessage(raw)) continue;
+    const existing = byId.get(raw.id);
+    if (existing) existing.message = raw;
+    else byId.set(raw.id, { message: raw, index: index++ });
+  }
+  const filtered = [...byId.values()].filter(
+    (entry) => !patientId || entry.message.patientId === patientId
+  );
+  return filtered
+    .sort(
+      (a, b) =>
+        b.message.createdAt.localeCompare(a.message.createdAt) || b.index - a.index
+    )
+    .map((entry) => entry.message);
 }
 
 export async function markMessagesRead(patientId: string): Promise<void> {
   // Messages are an append-only log; a read marker appends the updated record.
+  // Work from the latest version per id so an already-read message is not
+  // appended again on every poll.
   const d = await getDriver();
-  const all = (await d.getList(K.messages)) as PatientMessage[];
-  const unread = all.filter((m) => m.patientId === patientId && !m.readAt);
+  const all = await d.getList(K.messages);
+  const latest = new Map<string, PatientMessage>();
+  for (const raw of all) {
+    if (isPatientMessage(raw)) latest.set(raw.id, raw);
+  }
   const now = isoNow();
-  for (const m of unread) await d.appendList(K.messages, { ...m, readAt: now }, 2000);
+  for (const m of latest.values()) {
+    if (m.patientId === patientId && !m.readAt) {
+      await d.appendList(K.messages, { ...m, readAt: now }, 2000);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -697,25 +911,27 @@ export async function linkSessionToPatient(
   patientId: string,
   linkedBy?: string
 ): Promise<SessionPatientLink> {
+  const key = sessionKey(sessionId);
   const link: SessionPatientLink = {
-    sessionId,
+    sessionId: key,
     patientId,
     linkedAt: isoNow(),
     linkedBy,
   };
   const d = await getDriver();
-  await d.setDoc(K.sessionLink(sessionId), link);
-  await d.del(K.sessionUnlinked(sessionId));
+  await d.setDoc(K.sessionLink(key), link);
+  await d.del(K.sessionUnlinked(key));
   return link;
 }
 
 export async function getSessionLink(sessionId: string): Promise<SessionPatientLink | null> {
   const d = await getDriver();
-  return ((await d.getDoc(K.sessionLink(sessionId))) as SessionPatientLink | null) ?? null;
+  return asSessionLink(await d.getDoc(K.sessionLink(sessionKey(sessionId))));
 }
 
 export async function unlinkSessionPatient(sessionId: string): Promise<void> {
+  const key = sessionKey(sessionId);
   const d = await getDriver();
-  await d.del(K.sessionLink(sessionId));
-  await d.setDoc(K.sessionUnlinked(sessionId), true);
+  await d.del(K.sessionLink(key));
+  await d.setDoc(K.sessionUnlinked(key), true);
 }

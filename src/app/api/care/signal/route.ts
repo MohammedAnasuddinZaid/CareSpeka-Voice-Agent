@@ -1,5 +1,10 @@
 import type { NextRequest } from "next/server";
-import { findSessionByParticipantToken, getSession, listSignals, pushSignal } from "@/lib/care/repo";
+import {
+  findSessionByParticipantToken,
+  getSessionLoose,
+  listSignals,
+  pushSignal,
+} from "@/lib/care/repo";
 import { nurseFromRequest, participantFromRequest } from "@/lib/care/auth";
 import { fail, ok, readBody, unauthorized } from "@/lib/care/http";
 import type { CareSignalKind } from "@/lib/care/types";
@@ -29,20 +34,20 @@ export async function POST(req: NextRequest) {
   const kind = (body?.kind ?? "") as CareSignalKind;
   if (!KINDS.has(kind)) return fail("Unknown signal kind.", 400);
 
-  const session = await getSession(sessionId);
+  const session = await getSessionLoose(sessionId);
   if (!session) return fail("Session not found.", 404);
   if (session.status === "ended" && kind !== "beacon" && kind !== "bye") {
     return fail("This session has ended.", 410);
   }
 
-  const role = await resolveRole(req, sessionId);
+  const role = await resolveRole(req, session.id);
   if (!role) return unauthorized("Not authorised to signal on this session.");
 
   const to = role === "nurse" ? "patient" : "nurse";
   const payload = JSON.stringify(body?.data ?? null);
   if (payload.length > 24_000) return fail("Signal payload too large.", 413);
 
-  const stored = await pushSignal(sessionId, to, { from: role, kind, data: body?.data ?? null });
+  const stored = await pushSignal(session.id, to, { from: role, kind, data: body?.data ?? null });
   return ok({ signal: stored });
 }
 
@@ -52,9 +57,12 @@ export async function GET(req: NextRequest) {
   if (!sessionId) return fail("A session is required.", 400);
   const since = Number(url.searchParams.get("since") || "0");
 
-  const role = await resolveRole(req, sessionId);
+  const session = await getSessionLoose(sessionId);
+  if (!session) return fail("Session not found.", 404);
+
+  const role = await resolveRole(req, session.id);
   if (!role) return unauthorized("Not authorised to read signals for this session.");
 
-  const signals = await listSignals(sessionId, role, Number.isFinite(since) ? since : 0);
+  const signals = await listSignals(session.id, role, Number.isFinite(since) ? since : 0);
   return ok({ signals, role });
 }

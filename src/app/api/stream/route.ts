@@ -21,10 +21,14 @@ const IDLE_TICK_MS = 2200;  // cadence when nothing has happened for a while
  */
 export async function GET(request: NextRequest): Promise<Response> {
   const { searchParams } = new URL(request.url);
-  const session = searchParams.get("session") ?? "";
-  if (!/^[A-Z0-9_-]{3,32}$/.test(session)) {
+  const rawSession = searchParams.get("session") ?? "";
+  // Session ids are case-insensitive across the whole API (sync, ingest and the
+  // care store all uppercase). Stream used to reject a lowercase id with 400,
+  // so a console with a lowercase session silently fell back to polling.
+  if (!/^[A-Z0-9_-]{3,32}$/i.test(rawSession)) {
     return new Response("Invalid session", { status: 400 });
   }
+  const session = rawSession.toUpperCase();
 
   // `?since=` (empty value) used to parse as 0 and replay the ENTIRE store on
   // the first tick — treat blank/malformed cursors as "last minute".

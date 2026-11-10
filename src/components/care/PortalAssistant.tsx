@@ -289,10 +289,11 @@ export default function PortalAssistant({
     void loadContext();
   }, [loadContext]);
 
-  // Refresh context every 12s so the readings shown match the live stream.
+  // Refresh context every 6s so the readings shown match the live stream and
+  // the alert watcher cannot evaluate readings the nurse is not seeing yet.
   useEffect(() => {
     if (!sessionId) return;
-    const timer = window.setInterval(() => void loadContext(true), 12_000);
+    const timer = window.setInterval(() => void loadContext(true), 6_000);
     return () => window.clearInterval(timer);
   }, [loadContext, sessionId]);
 

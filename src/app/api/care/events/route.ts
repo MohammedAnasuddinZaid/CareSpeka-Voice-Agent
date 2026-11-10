@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { appendEvent, findSessionByParticipantToken, getSession, listEvents } from "@/lib/care/repo";
+import { appendEvent, findSessionByParticipantToken, getSessionLoose, listEvents } from "@/lib/care/repo";
 import { nurseFromRequest, participantFromRequest } from "@/lib/care/auth";
 import { fail, ok, readBody, unauthorized } from "@/lib/care/http";
 import type { CareEventType } from "@/lib/care/types";
@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
   const type = (body?.type ?? "") as CareEventType;
   if (!CLIENT_TYPES.has(type)) return fail("Event type not permitted from clients.", 400);
 
-  const session = await getSession(sessionId);
+  const session = await getSessionLoose(sessionId);
   if (!session) return fail("Session not found.", 404);
 
   const nurse = await nurseFromRequest(req);
@@ -38,14 +38,14 @@ export async function POST(req: NextRequest) {
   if (!nurse) {
     const token = await participantFromRequest(req);
     const viaParticipant = token ? await findSessionByParticipantToken(token) : null;
-    if (!viaParticipant || viaParticipant.id !== sessionId) return unauthorized();
+    if (!viaParticipant || viaParticipant.id !== session.id) return unauthorized();
     actor = "patient";
   }
 
   const detail = body?.detail && typeof body.detail === "object" ? body.detail : undefined;
   if (detail && JSON.stringify(detail).length > 20_000) return fail("Event detail too large.", 413);
 
-  const event = await appendEvent(sessionId, type, actor, detail);
+  const event = await appendEvent(session.id, type, actor, detail);
   return ok({ event });
 }
 
@@ -55,13 +55,16 @@ export async function GET(req: NextRequest) {
   if (!sessionId) return fail("A session is required.", 400);
   const since = Number(url.searchParams.get("since") || "0");
 
+  const session = await getSessionLoose(sessionId);
+  if (!session) return fail("Session not found.", 404);
+
   const nurse = await nurseFromRequest(req);
   if (!nurse) {
     const token = await participantFromRequest(req);
-    const session = token ? await findSessionByParticipantToken(token) : null;
-    if (!session || session.id !== sessionId) return unauthorized();
+    const viaParticipant = token ? await findSessionByParticipantToken(token) : null;
+    if (!viaParticipant || viaParticipant.id !== session.id) return unauthorized();
   }
 
-  const events = await listEvents(sessionId, Number.isFinite(since) ? since : 0);
+  const events = await listEvents(session.id, Number.isFinite(since) ? since : 0);
   return ok({ events });
 }

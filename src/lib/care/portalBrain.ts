@@ -461,13 +461,17 @@ function suggestionsFor(patient: ClinicalPatient | null, findings: SignalFinding
 export async function buildPortalContext(sessionId: string): Promise<PortalContext> {
   const store = await getSessionStore();
   const d = await getDriver();
+  // Live metrics, pairing and link records are keyed by uppercase session id
+  // (the API normalises to uppercase, while the stored care session row is
+  // lowercase). Normalise once here so internal callers work either way.
+  const scope = sessionId.trim().toUpperCase();
   const [storedLink, session, metricsMap, vitalsMap, patients, unlinked] = await Promise.all([
-    getSessionLink(sessionId).catch(() => null),
-    getSessionLoose(sessionId).catch(() => null),
-    store.getMetrics(sessionId).catch(() => ({})),
-    store.getVitals(sessionId).catch(() => ({})),
+    getSessionLink(scope).catch(() => null),
+    getSessionLoose(scope).catch(() => null),
+    store.getMetrics(scope).catch(() => ({})),
+    store.getVitals(scope).catch(() => ({})),
     listPatients().catch(() => [] as ClinicalPatient[]),
-    d.getDoc(K.sessionUnlinked(sessionId)).catch(() => null),
+    d.getDoc(K.sessionUnlinked(scope)).catch(() => null),
   ]);
 
   // A session is created for a specific patient. Use that patient until the
@@ -476,7 +480,7 @@ export async function buildPortalContext(sessionId: string): Promise<PortalConte
   let link: SessionPatientLink | null = storedLink;
   if (!unlinked && !link && session?.patientId) {
     link = {
-      sessionId,
+      sessionId: scope,
       patientId: session.patientId,
       linkedAt: session.createdAt,
       linkedBy: session.nurseName,
@@ -487,12 +491,12 @@ export async function buildPortalContext(sessionId: string): Promise<PortalConte
     const realPatients = patients.filter((p) => !p.synthetic);
     if (realPatients.length === 1) {
       link = {
-        sessionId,
+        sessionId: scope,
         patientId: realPatients[0].id,
         linkedAt: new Date().toISOString(),
         linkedBy: "auto",
       };
-      void linkSessionToPatient(sessionId, realPatients[0].id, "auto").catch(() => undefined);
+      void linkSessionToPatient(scope, realPatients[0].id, "auto").catch(() => undefined);
     }
   }
 
@@ -505,12 +509,12 @@ export async function buildPortalContext(sessionId: string): Promise<PortalConte
     // Stale link: the patient no longer exists. Drop the link so callers do not
     // dereference a null patient downstream.
     resolvedLink = null;
-    void unlinkSessionPatient(sessionId).catch(() => undefined);
+    void unlinkSessionPatient(scope).catch(() => undefined);
   }
   const records = resolvedLink ? await listRecords(resolvedLink.patientId) : [];
 
   return {
-    sessionId,
+    sessionId: scope,
     link: resolvedLink,
     patientId: resolvedLink?.patientId ?? null,
     patient,

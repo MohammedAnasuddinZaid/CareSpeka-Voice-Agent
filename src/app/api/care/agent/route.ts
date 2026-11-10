@@ -3,7 +3,7 @@ import {
   appendEvent,
   appendTranscript,
   getPatient,
-  getSession,
+  getSessionLoose,
   getTranscriptRaw,
   updateSession,
 } from "@/lib/care/repo";
@@ -28,12 +28,12 @@ export async function POST(req: NextRequest) {
   const sessionId = body?.sessionId?.trim();
   if (!sessionId) return fail("A session is required.", 400);
 
-  const session = await getSession(sessionId);
+  const session = await getSessionLoose(sessionId);
   if (!session) return fail("Session not found.", 404);
   if (session.status === "ended") return fail("This session has ended.", 410);
 
   const patient = await getPatient(session.patientId);
-  const entries = await getTranscriptRaw(sessionId);
+  const entries = await getTranscriptRaw(session.id);
 
   const wantsGreeting = body?.mode === "greeting" || !entries.some((e) => e.role === "agent");
   let text: string;
@@ -50,15 +50,15 @@ export async function POST(req: NextRequest) {
   }
 
   if (escalate) {
-    await updateSession(sessionId, { escalated: true });
-    await appendEvent(sessionId, "escalation.created", "system", {
+    await updateSession(session.id, { escalated: true });
+    await appendEvent(session.id, "escalation.created", "system", {
       symptoms: escalationReason,
       source: "fallback-agent",
     });
   }
 
-  const entry = await appendTranscript(sessionId, { role: "agent", text, engine: ENGINE });
-  await appendEvent(sessionId, "agent.response.completed", "agent", { engine: ENGINE, seq: entry.seq });
+  const entry = await appendTranscript(session.id, { role: "agent", text, engine: ENGINE });
+  await appendEvent(session.id, "agent.response.completed", "agent", { engine: ENGINE, seq: entry.seq });
 
   return ok({
     entry,
