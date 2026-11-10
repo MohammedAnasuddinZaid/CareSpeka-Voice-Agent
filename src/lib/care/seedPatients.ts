@@ -224,17 +224,342 @@ export const SYNTHETIC_PATIENTS: ClinicalPatient[] = [
       { id: "e3", at: daysAgo(2), kind: "in-person", by: "Community nurse", summary: "Wound review: mild erythema at the inferior port site, no discharge. Started oral antibiotics and arranged review." },
     ],
   },
+  {
+    id: "pt_0007",
+    extension: "1007",
+    displayName: "Margaret O'Connor",
+    age: 76,
+    sex: "female",
+    room: "Ward A / Bed 5",
+    primaryConcern: "Falls and hip fracture recovery after hemiarthroplasty",
+    language: "en",
+    synthetic: true,
+    carePlan:
+      "Mobile with a frame and one assistant, check for dizziness before standing, continue apixaban, monitor wound and bowels, physiotherapy five days a week.",
+    conditions: [
+      { id: "c1", code: "S72.00", name: "Fractured neck of femur (left)", status: "resolved", since: "2026-10-24", note: "Left hemiarthroplasty performed, no postoperative complication" },
+      { id: "c2", code: "M81.0", name: "Osteoporosis", status: "active", since: "2017-06-12" },
+      { id: "c3", code: "I48.91", name: "Atrial fibrillation", status: "active", since: "2015-03-08" },
+      { id: "c4", code: "F06.7", name: "Mild cognitive impairment", status: "active", since: "2024-01-19", note: "Baseline sometimes forgetful; no delirium during this admission" },
+    ],
+    medications: [
+      { id: "m1", name: "Apixaban", dose: "5 mg", route: "oral", frequency: "twice daily", status: "active", since: "2016-04-02" },
+      { id: "m2", name: "Bisoprolol", dose: "2.5 mg", route: "oral", frequency: "once daily", status: "active", since: "2015-03-10" },
+      { id: "m3", name: "Calcium + Vitamin D", dose: "500 mg", route: "oral", frequency: "once daily", status: "active", since: "2017-06-15" },
+      { id: "m4", name: "Paracetamol", dose: "1 g", route: "oral", frequency: "up to four times daily as needed", status: "active", since: "2026-10-24" },
+      { id: "m5", name: "Lactulose", dose: "15 ml", route: "oral", frequency: "twice daily", status: "active", since: "2026-10-26", note: "Opioid-related constipation prevention" },
+    ],
+    allergies: [
+      { id: "a1", substance: "Codeine", reaction: "Confusion and severe constipation", severity: "severe" },
+    ],
+    observations: [
+      { id: "o1", label: "Blood pressure", value: "118/72", unit: "mmHg", at: daysAgo(1), provenance: "record" },
+      { id: "o2", label: "Heart rate", value: 78, unit: "bpm", at: daysAgo(1), provenance: "record" },
+      { id: "o3", label: "Haemoglobin", value: 98, unit: "g/L", at: daysAgo(2), provenance: "record" },
+      { id: "o4", label: "Pain score", value: 3, unit: "/10", at: daysAgo(1), provenance: "record" },
+      { id: "o5", label: "Temperature", value: 36.8, unit: "°C", at: daysAgo(1), provenance: "record" },
+      { id: "o6", label: "Assisted steps", value: 18, unit: "steps", at: daysAgo(1), provenance: "record" },
+    ],
+    encounters: [
+      { id: "e1", at: daysAgo(12), kind: "in-person", by: "Dr. Menon", summary: "Admitted after a fall at home with a left femoral neck fracture. Underwent left hemiarthroplasty on the same day." },
+      { id: "e2", at: daysAgo(6), kind: "in-person", by: "Physiotherapist", summary: "Mobilising short distances with a frame and one assistant. Standing blood pressure did not drop significantly." },
+      { id: "e3", at: daysAgo(2), kind: "web-voice-call", by: "CareSpeak agent", summary: "Reported feeling unsteady in the morning and needing help to the bathroom. Advised to call before standing." },
+    ],
+  },
+  {
+    id: "pt_0008",
+    extension: "1008",
+    displayName: "Arjun Patel",
+    age: 62,
+    sex: "male",
+    room: "Home care",
+    primaryConcern: "Chronic kidney disease stage 4 with a gout flare",
+    language: "en",
+    synthetic: true,
+    carePlan:
+      "Renal diet and fluid advice, avoid NSAIDs, review all medicines with renal dosing, weekly creatinine, potassium and blood pressure, and treat the current gout flare as prescribed.",
+    conditions: [
+      { id: "c1", code: "N18.4", name: "Chronic kidney disease stage 4", status: "active", since: "2019-09-14" },
+      { id: "c2", code: "M10.9", name: "Gout", status: "active", since: "2012-02-20", note: "Recurrent flares in the right first metatarsophalangeal joint" },
+      { id: "c3", code: "I10", name: "Essential hypertension", status: "active", since: "2008-05-30" },
+      { id: "c4", code: "E11.9", name: "Type 2 diabetes mellitus", status: "active", since: "2015-08-11" },
+    ],
+    medications: [
+      { id: "m1", name: "Allopurinol", dose: "100 mg", route: "oral", frequency: "once daily", status: "active", since: "2019-10-01", note: "Renal dose; escalate slowly with urate monitoring" },
+      { id: "m2", name: "Amlodipine", dose: "5 mg", route: "oral", frequency: "once daily", status: "active", since: "2008-06-02" },
+      { id: "m3", name: "Metformin", dose: "500 mg", route: "oral", frequency: "once daily with breakfast", status: "active", since: "2015-08-15", note: "Revised dose for renal function" },
+      { id: "m4", name: "Sodium bicarbonate", dose: "500 mg", route: "oral", frequency: "twice daily", status: "active", since: "2024-03-08" },
+      { id: "m5", name: "Colchicine", dose: "500 µg", route: "oral", frequency: "twice daily during flare", status: "active", since: "2026-11-02" },
+    ],
+    allergies: [
+      { id: "a1", substance: "Ibuprofen", reaction: "Acute kidney injury and ankle swelling", severity: "severe" },
+    ],
+    observations: [
+      { id: "o1", label: "Creatinine", value: 285, unit: "µmol/L", at: daysAgo(3), provenance: "record" },
+      { id: "o2", label: "eGFR", value: 21, unit: "mL/min/1.73m²", at: daysAgo(3), provenance: "record" },
+      { id: "o3", label: "Potassium", value: 5.4, unit: "mmol/L", at: daysAgo(3), provenance: "record" },
+      { id: "o4", label: "Urate", value: 0.52, unit: "mmol/L", at: daysAgo(3), provenance: "record" },
+      { id: "o5", label: "Blood pressure", value: "152/88", unit: "mmHg", at: daysAgo(1), provenance: "record" },
+      { id: "o6", label: "Weight", value: 82.0, unit: "kg", at: daysAgo(1), provenance: "record" },
+    ],
+    encounters: [
+      { id: "e1", at: daysAgo(18), kind: "in-person", by: "Dr. Iyer", summary: "Nephrology review. Discussed renal protection, a low-potassium diet and avoiding all NSAIDs." },
+      { id: "e2", at: daysAgo(3), kind: "telephony", by: "Nurse Demo", summary: "Reported a painful, swollen right big toe for two days. Colchicine started; nephrology informed." },
+    ],
+  },
+  {
+    id: "pt_0009",
+    extension: "1009",
+    displayName: "Sofia Mendes",
+    age: 34,
+    sex: "female",
+    room: "Home care",
+    primaryConcern: "Postpartum blood-pressure review after pre-eclampsia",
+    language: "en",
+    synthetic: true,
+    carePlan:
+      "Twice-daily blood pressure, continue labetalol and postnatal enoxaparin, watch for headache, visual disturbance or epigastric pain, wound check, and breastfeeding support.",
+    conditions: [
+      { id: "c1", code: "O14.1", name: "Severe pre-eclampsia", status: "resolved", since: "2026-10-30", note: "Delivered by caesarean section; blood pressure remains elevated postpartum" },
+      { id: "c2", code: "O90.3", name: "Postpartum hypertension", status: "active", since: "2026-10-31" },
+      { id: "c3", code: "O86.0", name: "Caesarean wound infection", status: "resolved", since: "2026-11-04", note: "Superficial wound infection treated with oral antibiotics" },
+    ],
+    medications: [
+      { id: "m1", name: "Labetalol", dose: "200 mg", route: "oral", frequency: "twice daily", status: "active", since: "2026-10-30" },
+      { id: "m2", name: "Enoxaparin", dose: "40 mg", route: "subcutaneous", frequency: "once daily for six weeks after delivery", status: "active", since: "2026-10-30" },
+      { id: "m3", name: "Paracetamol", dose: "1 g", route: "oral", frequency: "up to four times daily as needed", status: "active", since: "2026-10-30" },
+      { id: "m4", name: "Ferrous fumarate", dose: "210 mg", route: "oral", frequency: "once daily", status: "active", since: "2026-11-01", note: "Postpartum iron supplementation" },
+    ],
+    allergies: [
+      { id: "a1", substance: "Latex", reaction: "Contact rash and itching", severity: "mild" },
+    ],
+    observations: [
+      { id: "o1", label: "Blood pressure", value: "146/94", unit: "mmHg", at: daysAgo(4), provenance: "record" },
+      { id: "o2", label: "Blood pressure", value: "138/88", unit: "mmHg", at: daysAgo(1), provenance: "record" },
+      { id: "o3", label: "Urine protein:creatinine ratio", value: 32, unit: "mg/mmol", at: daysAgo(5), provenance: "record" },
+      { id: "o4", label: "Haemoglobin", value: 104, unit: "g/L", at: daysAgo(5), provenance: "record" },
+      { id: "o5", label: "Weight", value: 74.0, unit: "kg", at: daysAgo(1), provenance: "record" },
+    ],
+    encounters: [
+      { id: "e1", at: daysAgo(11), kind: "in-person", by: "Dr. Rao", summary: "Emergency caesarean section for severe pre-eclampsia at 37 weeks. Baby well, on the postnatal ward." },
+      { id: "e2", at: daysAgo(6), kind: "in-person", by: "Community midwife", summary: "Wound red and tender at the right edge; swab taken and oral antibiotics started. Blood pressure still above target." },
+      { id: "e3", at: daysAgo(2), kind: "web-voice-call", by: "CareSpeak agent", summary: "Reported a mild headache and tiredness but no visual change or epigastric pain. Advised to rest and repeat the blood pressure." },
+    ],
+  },
+  {
+    id: "pt_0010",
+    extension: "1010",
+    displayName: "Thomas Green",
+    age: 57,
+    sex: "male",
+    room: "Ward B / Bed 4",
+    primaryConcern: "Atrial fibrillation with recent transient ischaemic attack",
+    language: "en",
+    synthetic: true,
+    carePlan:
+      "Continue warfarin with a target INR of 2.0–3.0, weekly INR while unstable, monitor for bleeding, review falls risk and stroke symptoms, and attend the anticoagulation clinic.",
+    conditions: [
+      { id: "c1", code: "I48.91", name: "Atrial fibrillation", status: "active", since: "2023-07-18" },
+      { id: "c2", code: "G45.9", name: "Transient ischaemic attack", status: "resolved", since: "2026-10-20", note: "Left arm weakness and slurred speech resolved within 40 minutes" },
+      { id: "c3", code: "I10", name: "Essential hypertension", status: "active", since: "2016-11-05" },
+      { id: "c4", code: "E78.5", name: "Hyperlipidaemia", status: "active", since: "2016-11-05" },
+    ],
+    medications: [
+      { id: "m1", name: "Warfarin", dose: "4 mg", route: "oral", frequency: "once daily at 18:00, dose adjusted by INR", status: "active", since: "2026-10-20" },
+      { id: "m2", name: "Bisoprolol", dose: "5 mg", route: "oral", frequency: "once daily", status: "active", since: "2023-07-20" },
+      { id: "m3", name: "Atorvastatin", dose: "40 mg", route: "oral", frequency: "once at night", status: "active", since: "2016-11-10" },
+      { id: "m4", name: "Ramipril", dose: "5 mg", route: "oral", frequency: "once daily", status: "active", since: "2016-11-10" },
+    ],
+    allergies: [
+      { id: "a1", substance: "Aspirin", reaction: "Wheeze and facial flushing", severity: "moderate" },
+    ],
+    observations: [
+      { id: "o1", label: "INR", value: 2.4, unit: "", at: daysAgo(14), provenance: "record" },
+      { id: "o2", label: "INR", value: 3.1, unit: "", at: daysAgo(6), provenance: "record" },
+      { id: "o3", label: "INR", value: 2.7, unit: "", at: daysAgo(1), provenance: "record" },
+      { id: "o4", label: "Heart rate", value: 88, unit: "bpm", at: daysAgo(1), provenance: "record" },
+      { id: "o5", label: "Blood pressure", value: "132/80", unit: "mmHg", at: daysAgo(1), provenance: "record" },
+    ],
+    encounters: [
+      { id: "e1", at: daysAgo(20), kind: "in-person", by: "Dr. Menon", summary: "Admitted with a resolved left-arm TIA. Carotid imaging normal, warfarin started and cardiology informed." },
+      { id: "e2", at: daysAgo(7), kind: "in-person", by: "Anticoagulation nurse", summary: "INR 3.1, above target. Warfarin reduced to 4 mg for three days, then rechecked. No bleeding." },
+      { id: "e3", at: daysAgo(2), kind: "telephony", by: "Nurse Demo", summary: "Reported brushing his gums and a small bruise on the forearm. Advised to report any black stool or unusual bleeding." },
+    ],
+  },
+  {
+    id: "pt_0011",
+    extension: "1011",
+    displayName: "Fatima Al-Hassan",
+    age: 48,
+    sex: "female",
+    room: "Home care",
+    primaryConcern: "Rheumatoid arthritis on methotrexate with a new cough",
+    language: "en",
+    synthetic: true,
+    carePlan:
+      "Continue methotrexate and folic acid, monitor for infection while on immunosuppression, check temperature and chest symptoms, arrange rheumatology review and avoid live vaccines.",
+    conditions: [
+      { id: "c1", code: "M05.79", name: "Seropositive rheumatoid arthritis", status: "active", since: "2016-05-11" },
+      { id: "c2", code: "M35.0", name: "Sjögren syndrome", status: "active", since: "2019-02-03" },
+      { id: "c3", code: "M81.0", name: "Osteoporosis", status: "active", since: "2021-08-17", note: "Long-term steroid use" },
+    ],
+    medications: [
+      { id: "m1", name: "Methotrexate", dose: "15 mg", route: "oral", frequency: "once weekly on Sunday", status: "active", since: "2016-06-01" },
+      { id: "m2", name: "Folic acid", dose: "5 mg", route: "oral", frequency: "once weekly on Tuesday", status: "active", since: "2016-06-01" },
+      { id: "m3", name: "Hydroxychloroquine", dose: "200 mg", route: "oral", frequency: "twice daily", status: "active", since: "2017-01-10" },
+      { id: "m4", name: "Prednisolone", dose: "5 mg", route: "oral", frequency: "once daily", status: "active", since: "2022-04-02" },
+      { id: "m5", name: "Alendronic acid", dose: "70 mg", route: "oral", frequency: "once weekly on Wednesday", status: "active", since: "2021-08-20" },
+    ],
+    allergies: [
+      { id: "a1", substance: "Sulfa drugs", reaction: "Widespread rash", severity: "moderate" },
+    ],
+    observations: [
+      { id: "o1", label: "C-reactive protein", value: 28, unit: "mg/L", at: daysAgo(4), provenance: "record" },
+      { id: "o2", label: "ESR", value: 42, unit: "mm/h", at: daysAgo(4), provenance: "record" },
+      { id: "o3", label: "Haemoglobin", value: 108, unit: "g/L", at: daysAgo(4), provenance: "record" },
+      { id: "o4", label: "Temperature", value: 37.9, unit: "°C", at: daysAgo(1), provenance: "record" },
+      { id: "o5", label: "Joint pain score", value: 5, unit: "/10", at: daysAgo(1), provenance: "record" },
+    ],
+    encounters: [
+      { id: "e1", at: daysAgo(25), kind: "in-person", by: "Dr. Iyer", summary: "Rheumatology review. Disease activity moderate. Methotrexate continued; bloods satisfactory." },
+      { id: "e2", at: daysAgo(2), kind: "telephony", by: "Nurse Demo", summary: "Reported a dry cough and low-grade fever for two days. Advised to hold methotrexate until reviewed and to seek same-day assessment if breathless." },
+    ],
+  },
+  {
+    id: "pt_0012",
+    extension: "1012",
+    displayName: "Noah Williams",
+    age: 8,
+    sex: "male",
+    room: "Home care",
+    primaryConcern: "Newly diagnosed type 1 diabetes after diabetic ketoacidosis",
+    language: "en",
+    synthetic: true,
+    carePlan:
+      "Parent-administered insulin with meals and at night, four-hourly glucose and ketone checks while unwell, school care plan, diabetes educator review and emergency glucagon at home and school.",
+    conditions: [
+      { id: "c1", code: "E10.9", name: "Type 1 diabetes mellitus", status: "active", since: "2026-10-27" },
+      { id: "c2", code: "E10.10", name: "Diabetic ketoacidosis", status: "resolved", since: "2026-10-27", note: "Resolved with intravenous fluids and insulin; discharged after three days" },
+    ],
+    medications: [
+      { id: "m1", name: "Insulin glargine", dose: "8 units", route: "subcutaneous", frequency: "once daily at bedtime", status: "active", since: "2026-10-29" },
+      { id: "m2", name: "Insulin lispro", dose: "4 units", route: "subcutaneous", frequency: "with meals, adjusted by carbohydrate intake", status: "active", since: "2026-10-29" },
+      { id: "m3", name: "Glucagon", dose: "0.5 mg", route: "intramuscular", frequency: "emergency use only for severe hypoglycaemia", status: "active", since: "2026-10-30" },
+    ],
+    allergies: [],
+    observations: [
+      { id: "o1", label: "Blood glucose", value: 14.2, unit: "mmol/L", at: daysAgo(2), provenance: "record" },
+      { id: "o2", label: "Blood ketones", value: 0.8, unit: "mmol/L", at: daysAgo(2), provenance: "record" },
+      { id: "o3", label: "Weight", value: 26.0, unit: "kg", at: daysAgo(3), provenance: "record" },
+      { id: "o4", label: "HbA1c", value: 11.2, unit: "%", at: daysAgo(9), provenance: "record" },
+    ],
+    encounters: [
+      { id: "e1", at: daysAgo(12), kind: "in-person", by: "Dr. Rao", summary: "Admitted in diabetic ketoacidosis. Treated with intravenous fluids and an insulin infusion, transitioned to subcutaneous insulin." },
+      { id: "e2", at: daysAgo(8), kind: "in-person", by: "Diabetes educator", summary: "Parent taught glucose monitoring, insulin drawing, hypoglycaemia management and sick-day rules. School care plan started." },
+      { id: "e3", at: daysAgo(2), kind: "telephony", by: "Nurse Demo", summary: "Parent reported a bedtime glucose of 14.2 mmol/L with ketones 0.8. Advised fluids, correction dose per plan and repeat ketones in two hours." },
+    ],
+  },
+  {
+    id: "pt_0013",
+    extension: "1013",
+    displayName: "Elena Rossi",
+    age: 70,
+    sex: "female",
+    room: "Ward C / Bed 6",
+    primaryConcern: "Stroke rehabilitation with swallowing difficulty",
+    language: "en",
+    synthetic: true,
+    carePlan:
+      "Soft diet with thickened fluids, swallow review, daily blood pressure and neurological observations, mobilise with two assistants, continue clopidogrel and statin, and screen for depression.",
+    conditions: [
+      { id: "c1", code: "I63.9", name: "Left middle cerebral artery infarct", status: "active", since: "2026-10-22", note: "Right-sided weakness and mild expressive aphasia" },
+      { id: "c2", code: "I48.91", name: "Atrial fibrillation", status: "active", since: "2018-09-30" },
+      { id: "c3", code: "R13.10", name: "Dysphagia", status: "active", since: "2026-10-22" },
+      { id: "c4", code: "E78.5", name: "Hyperlipidaemia", status: "active", since: "2015-04-14" },
+    ],
+    medications: [
+      { id: "m1", name: "Clopidogrel", dose: "75 mg", route: "oral", frequency: "once daily", status: "active", since: "2026-10-23" },
+      { id: "m2", name: "Atorvastatin", dose: "80 mg", route: "oral", frequency: "once at night", status: "active", since: "2026-10-23" },
+      { id: "m3", name: "Metoprolol", dose: "25 mg", route: "oral", frequency: "twice daily", status: "active", since: "2018-10-02" },
+      { id: "m4", name: "Macrogol", dose: "1 sachet", route: "oral", frequency: "once daily", status: "active", since: "2026-10-26" },
+    ],
+    allergies: [],
+    observations: [
+      { id: "o1", label: "Blood pressure", value: "148/86", unit: "mmHg", at: daysAgo(1), provenance: "record" },
+      { id: "o2", label: "Heart rate", value: 76, unit: "bpm", at: daysAgo(1), provenance: "record" },
+      { id: "o3", label: "NIHSS", value: 4, unit: "points", at: daysAgo(3), provenance: "record" },
+      { id: "o4", label: "Oxygen saturation", value: 96, unit: "%", at: daysAgo(1), provenance: "record" },
+      { id: "o5", label: "Swallow screen", value: "Soft diet, thickened fluids", at: daysAgo(3), provenance: "record" },
+    ],
+    encounters: [
+      { id: "e1", at: daysAgo(19), kind: "in-person", by: "Dr. Menon", summary: "Admitted with a left MCA infarct outside the thrombolysis window. Stroke-unit care, aspirin avoided due to AF; clopidogrel started after imaging." },
+      { id: "e2", at: daysAgo(9), kind: "in-person", by: "Speech and language therapist", summary: "Modified barium swallow showed aspiration risk with thin fluids. Soft diet and thickened fluids recommended." },
+      { id: "e3", at: daysAgo(2), kind: "in-person", by: "Physiotherapist", summary: "Transfers with two assistants and a rotunda. Right grip improving; ongoing rehab plan." },
+    ],
+  },
+  {
+    id: "pt_0014",
+    extension: "1014",
+    displayName: "Samuel Okafor",
+    age: 65,
+    sex: "male",
+    room: "Ward B / Bed 6",
+    primaryConcern: "Recovery from urosepsis with an indwelling catheter",
+    language: "en",
+    synthetic: true,
+    carePlan:
+      "Complete antibiotics, monitor temperature, blood pressure, urine output and confusion, maintain catheter care, check renal function and arrange urology follow-up for benign prostatic enlargement.",
+    conditions: [
+      { id: "c1", code: "A41.9", name: "Sepsis secondary to urinary tract infection", status: "resolved", since: "2026-11-01", note: "Improved with intravenous antibiotics and fluids" },
+      { id: "c2", code: "N40.1", name: "Benign prostatic enlargement", status: "active", since: "2020-06-17" },
+      { id: "c3", code: "E11.9", name: "Type 2 diabetes mellitus", status: "active", since: "2013-02-08" },
+      { id: "c4", code: "N18.2", name: "Chronic kidney disease stage 2", status: "active", since: "2021-09-25" },
+    ],
+    medications: [
+      { id: "m1", name: "Tamsulosin", dose: "400 µg", route: "oral", frequency: "once daily after food", status: "active", since: "2020-06-20" },
+      { id: "m2", name: "Metformin", dose: "500 mg", route: "oral", frequency: "twice daily", status: "active", since: "2013-02-12" },
+      { id: "m3", name: "Amlodipine", dose: "5 mg", route: "oral", frequency: "once daily", status: "active", since: "2018-07-04" },
+      { id: "m4", name: "Cefuroxime", dose: "750 mg", route: "intravenous", frequency: "three times daily, day 4 of 7", status: "active", since: "2026-11-01" },
+    ],
+    allergies: [
+      { id: "a1", substance: "Penicillin", reaction: "Rash and swelling of the lips", severity: "moderate" },
+    ],
+    observations: [
+      { id: "o1", label: "Temperature", value: 36.9, unit: "°C", at: daysAgo(1), provenance: "record" },
+      { id: "o2", label: "Blood pressure", value: "108/64", unit: "mmHg", at: daysAgo(1), provenance: "record" },
+      { id: "o3", label: "Heart rate", value: 92, unit: "bpm", at: daysAgo(1), provenance: "record" },
+      { id: "o4", label: "White cell count", value: 11.2, unit: "×10⁹/L", at: daysAgo(2), provenance: "record" },
+      { id: "o5", label: "Urine output", value: 40, unit: "mL/hour", at: daysAgo(1), provenance: "record" },
+      { id: "o6", label: "Blood glucose", value: 9.1, unit: "mmol/L", at: daysAgo(1), provenance: "record" },
+    ],
+    encounters: [
+      { id: "e1", at: daysAgo(10), kind: "in-person", by: "Dr. Rao", summary: "Admitted with fever, confusion and hypotension from a urinary source. Sepsis bundle completed; catheter replaced." },
+      { id: "e2", at: daysAgo(5), kind: "in-person", by: "Urology", summary: "Catheter draining well. Plan for trial without catheter after antibiotics and urology clinic review." },
+      { id: "e3", at: daysAgo(2), kind: "web-voice-call", by: "CareSpeak agent", summary: "Reported feeling better, no shivering, passing urine through the catheter. Advised to keep drinking and report any confusion or fever." },
+    ],
+  },
 ];
 
 /** Bump when the synthetic dataset changes so existing stores reconcile it. */
-export const SYNTHETIC_SEED_VERSION = 2;
+export const SYNTHETIC_SEED_VERSION = 3;
 
 /**
  * Patients added after the first seed. Reconciliation only ever adds these to
  * an existing store; older synthetic patients are refreshed but never
  * resurrected if the nurse deleted them.
  */
-export const SYNTHETIC_ADDITION_IDS = new Set(["pt_0005", "pt_0006"]);
+export const SYNTHETIC_ADDITION_IDS = new Set([
+  "pt_0005",
+  "pt_0006",
+  "pt_0007",
+  "pt_0008",
+  "pt_0009",
+  "pt_0010",
+  "pt_0011",
+  "pt_0012",
+  "pt_0013",
+  "pt_0014",
+]);
 
 export function getSeedPatient(id: string): ClinicalPatient | undefined {
   return SYNTHETIC_PATIENTS.find((p) => p.id === id);

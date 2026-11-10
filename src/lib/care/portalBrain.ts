@@ -23,13 +23,17 @@ import { CareKeys as K, getDriver } from "./store";
 import {
   addMessage,
   appendAudit,
-  buildRecordContext,
   getPatient,
+  getReportBySession,
   getSessionLoose,
   getSessionLink,
+  getTranscriptRaw,
   linkSessionToPatient,
+  listMessages,
   listPatients,
   listRecords,
+  listSessions,
+  listTasks,
   unlinkSessionPatient,
 } from "./repo";
 import {
@@ -39,6 +43,23 @@ import {
   type PatientContext,
 } from "./assistant";
 import { geminiConfigured, geminiGenerate, geminiModelLabel } from "./gemini";
+import {
+  buildPatientPassages,
+  citationList,
+  evidenceAnswer,
+  retrievalContext,
+  retrievePassages,
+  type PatientExtras,
+  type RetrievedPassage,
+} from "./retrieval";
+import {
+  classifyQuestion,
+  emergencyAnswer,
+  smallTalkAnswer,
+  unknownAnswer,
+  type QuestionScope,
+} from "./knowledge";
+import { CARE_KNOWLEDGE } from "./careKnowledge";
 import type { ClinicalPatient, PatientRecord, SessionPatientLink } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -215,6 +236,17 @@ interface CachedAnswer {
   text: string;
   model: string;
   at: string;
+  intent?: string;
+  scope?: QuestionScope;
+  grounded?: boolean;
+  citations?: PortalCitation[];
+}
+
+export interface PortalCitation {
+  title: string;
+  kind: string;
+  source?: string;
+  at?: string;
 }
 
 function cacheKey(parts: Array<string | number | null | undefined>): string {
@@ -233,10 +265,15 @@ async function cacheGet(key: string): Promise<CachedAnswer | null> {
   }
 }
 
-async function cachePut(key: string, text: string, model: string): Promise<void> {
+async function cachePut(
+  key: string,
+  text: string,
+  model: string,
+  meta: Pick<CachedAnswer, "intent" | "scope" | "grounded" | "citations"> = {}
+): Promise<void> {
   try {
     const d = await getDriver();
-    const value: CachedAnswer = { text, model, at: new Date().toISOString() };
+    const value: CachedAnswer = { text, model, at: new Date().toISOString(), ...meta };
     await d.setDoc(K.aiCache(key), value);
     await d.appendList(K.aiCacheIndex, key, 500);
   } catch {
@@ -250,15 +287,35 @@ async function cachePut(key: string, text: string, model: string): Promise<void>
 
 const ANSWER_SYSTEM = `You are CareSpeak's nurse-portal assistant, speaking to a registered nurse who is monitoring a patient remotely.
 You are a careful, grounded clinical assistant, not a doctor.
+
+You will receive up to four kinds of material:
+1. PATIENT — structured facts from the authorised chart.
+2. RECORD EVIDENCE — numbered excerpts retrieved from inserted notes, call transcripts and reports.
+3. GENERAL GUIDANCE — short, general care knowledge, never specific to this patient.
+4. LIVE SIGNALS — device readings and the thresholds they crossed.
+
 Rules you must follow:
-- Use ONLY the PATIENT, INSERTED RECORDS and LIVE SIGNALS sections below. Never invent a value, medication, diagnosis, allergy or history.
-- Think through the question step by step, then answer in the requested length.
-- When a question is vague, combine the patient profile, inserted records and live readings into one useful answer.
-- If the answer is not in the supplied material, say plainly that it is not in the record and name what to check in person.
-- You may report readings and whether they are outside the stated thresholds. Do not diagnose or prescribe.
-- Respect the requested ANSWER LENGTH. Otherwise prefer short, spoken answers of 2-4 sentences (about 70 words).
+- For any patient-specific claim, use only PATIENT, RECORD EVIDENCE and LIVE SIGNALS. Never invent a value, medication, diagnosis, allergy, date or history.
+- If the chart does not answer a patient-specific question, say plainly that it is not in the record and name what to check.
+- GENERAL GUIDANCE may be used to explain a concept, a warning sign or a normal range. Always frame it as general guidance, not as this patient's result.
+- Think through the question, then answer in the requested length. Lead with the direct answer.
+- When a question is vague, combine the patient profile, the strongest evidence and the live readings into one useful answer.
+- Report readings and whether they are outside the stated thresholds. Do not diagnose or prescribe, and never suggest a dose change.
 - If a reading is critical, say what to check first.
-- Never claim to be a clinician or to have examined the patient.`;
+- Never claim to be a clinician or to have examined the patient.
+- If the nurse is joking, greeting you or asking a simple non-clinical question, answer naturally and briefly, then stay ready to help with the patient.
+- Do not mention source numbers such as S1 or S2 in a spoken answer. Sources are shown separately in the UI.`;
+
+const GENERAL_SYSTEM = `You are CareSpeak's nurse-portal assistant, answering a general care question for a registered nurse.
+Use the GENERAL GUIDANCE supplied when it is relevant. You may also use widely accepted clinical knowledge, but stay conservative.
+Rules:
+- Do not invent patient-specific facts. If no patient record is supplied, do not imply that you have one.
+- Do not diagnose or prescribe, and do not give a specific dose.
+- Prefer short, spoken-friendly answers of 2-4 sentences (about 70 words) unless a longer answer is requested.
+- If the question is outside health and care, answer briefly and honestly; you are a care assistant, not a general search engine.
+- Never claim to be a clinician.
+- If the question is a greeting, joke or simple arithmetic, answer it naturally in one or two sentences.`;
+
 
 const ALERT_SYSTEM = `You write ONE spoken sentence for a nurse's phone, based only on the LIVE SIGNALS and patient record supplied.
 Rules:
@@ -444,16 +501,20 @@ function suggestionsFor(patient: ClinicalPatient | null, findings: SignalFinding
   const out: string[] = [];
   if (findings.length) out.push("Is this urgent? What should I check first?");
   if (patient) {
-    out.push(`Give me ${name}'s full history`);
+    out.push(`What changed for ${name} since the last call?`);
+    out.push(`Explain ${name}'s main condition in plain English`);
     out.push(`What medications is ${name} on?`);
     out.push(`Any allergies or safety concerns for ${name}?`);
-    out.push("What changed since the last observation?");
-    out.push("Summarise the inserted records");
+    out.push(`Summarise ${name}'s inserted records`);
     out.push("Draft an SBAR handoff");
+    out.push("Which reading is closest to its threshold?");
+    const followUp = patient.primaryConcern?.match(/follow[- ]?up|review|check/i);
+    if (followUp) out.push(`What should I ask ${name} on the follow-up call?`);
   } else {
     out.push("What are the live readings?");
     out.push("Is anything urgent right now?");
     out.push("What should I check first?");
+    out.push("What are the warning signs of sepsis?");
   }
   return [...new Set(out)].slice(0, 6);
 }
@@ -746,6 +807,12 @@ export interface PortalAnswer {
   action?: PortalAction | null;
   /** Suggested next questions, grounded in the current patient and readings. */
   followUps?: string[];
+  /** What kind of question this was, so the UI can label general guidance honestly. */
+  scope?: QuestionScope;
+  /** True when the answer used this patient's chart or live readings. */
+  grounded?: boolean;
+  /** Records, transcripts or guidance the answer consulted. */
+  citations?: PortalCitation[];
 }
 
 /**
@@ -847,24 +914,116 @@ function rulesAnswer(question: string, patient: ClinicalPatient): { text: string
   return { text: result.answer, intent: result.intent };
 }
 
-/** Very small keyword search over the inserted free-text records. */
-function searchRecords(question: string, records: PatientRecord[]): PatientRecord[] {
-  const stop = new Set(
-    "the a an and or of to in on for with what which who when where how is are was were do does did has have had patient record records show tell about please any".split(
-      " "
-    )
-  );
-  const terms = question
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .split(/\s+/)
-    .filter((w) => w.length > 2 && !stop.has(w));
-  if (!terms.length) return [];
-  return records.filter((r) => {
-    const hay = `${r.title} ${r.source ?? ""} ${r.text}`.toLowerCase();
-    return terms.some((t) => hay.includes(t));
-  });
+/**
+ * Loads the parts of the chart that are not on the patient row: recent call
+ * transcripts, their reports, open tasks and messages. They are fetched in
+ * parallel and bounded to the two newest sessions so a question never turns
+ * into a full-store scan.
+ */
+async function loadKnowledgeExtras(patientId: string): Promise<PatientExtras> {
+  try {
+    const [sessions, tasks, messages] = await Promise.all([
+      listSessions(60).catch(() => []),
+      listTasks(patientId).catch(() => []),
+      listMessages(patientId).catch(() => []),
+    ]);
+    const recent = sessions.filter((s) => s.patientId === patientId).slice(0, 2);
+    const [transcripts, reports] = await Promise.all([
+      Promise.all(
+        recent.map(async (session) => ({
+          sessionId: session.id,
+          at: session.startedAt ?? session.createdAt,
+          entries: await getTranscriptRaw(session.id).catch(() => []),
+        }))
+      ),
+      Promise.all(recent.map((session) => getReportBySession(session.id).catch(() => null))),
+    ]);
+    return {
+      transcripts: transcripts.filter((t) => t.entries.length > 0),
+      reports: reports.filter((r): r is NonNullable<typeof r> => Boolean(r)),
+      tasks,
+      messages,
+    };
+  } catch {
+    return {};
+  }
 }
+
+function extrasSignature(extras: PatientExtras): string {
+  return [
+    ...(extras.transcripts ?? []).map((t) => `${t.sessionId}:${t.entries.length}`),
+    ...(extras.reports ?? []).map((r) => `${r.id}:${r.status}`),
+    ...(extras.tasks ?? []).map((t) => `${t.id}:${t.status}`),
+    ...(extras.messages ?? []).map((m) => m.id),
+  ].join(",");
+}
+
+/** General-care retrieval. Kept separate so record evidence never mixes in. */
+function generalGuidance(question: string, limit = 3) {
+  return retrievePassages(question, CARE_KNOWLEDGE, { limit, relativeFloor: 0.22, minMatched: 1 });
+}
+
+function citationFromPassages(passages: RetrievedPassage[]): PortalCitation[] {
+  return citationList(passages, 4);
+}
+
+/** De-duplicated citations across the record and the general knowledge shelf. */
+function mergeCitations(...groups: RetrievedPassage[][]): PortalCitation[] {
+  const seen = new Set<string>();
+  const out: PortalCitation[] = [];
+  for (const group of groups) {
+    for (const citation of citationList(group, 4)) {
+      if (seen.has(citation.title)) continue;
+      seen.add(citation.title);
+      out.push(citation);
+      if (out.length >= 4) return out;
+    }
+  }
+  return out;
+}
+
+function generalFallback(passages: RetrievedPassage[]): string | null {
+  if (!passages.length) return null;
+  const text = passages
+    .slice(0, 2)
+    .map((p) => p.excerpt.replace(/\s+/g, " ").trim())
+    .join(" ");
+  return `General guidance: ${text}`;
+}
+
+/** Compact, de-duplicated evidence line used when the model is unavailable. */
+function localEvidenceAnswer(
+  retrieved: RetrievedPassage[],
+  ctx: PortalContext,
+  patient: ClinicalPatient
+): string {
+  const parts: string[] = [];
+  if (retrieved.length) {
+    const answer = evidenceAnswer(retrieved, 2);
+    if (answer) parts.push(answer);
+  }
+  if (ctx.findings.length) {
+    parts.push(
+      `Live readings needing attention: ${ctx.findings
+        .map((f) => `${f.label} ${f.reading} (${f.note})`)
+        .join("; ")}.`
+    );
+  } else if (ctx.metrics) {
+    parts.push("All monitored live readings are inside their thresholds right now.");
+  }
+  if (!retrieved.length) {
+    parts.push(
+      `${patient.displayName} is ${patient.age != null ? `${patient.age} years old` : "of unknown age"}${
+        patient.sex ? `, ${patient.sex}` : ""
+      }${patient.room ? `, in ${patient.room}` : ""}. Primary concern: ${
+        patient.primaryConcern ?? "not recorded"
+      }.`
+    );
+  }
+  parts.push("Ask for a specific medication, allergy, observation, record or SBAR handoff for more detail.");
+  return parts.join(" ");
+}
+
 
 export async function askPortal(
   sessionId: string,
@@ -886,20 +1045,27 @@ export async function askPortal(
   const ctx = await buildPortalContext(sessionId);
   const followUps = suggestionsFor(ctx.patient, ctx.findings).slice(0, 3);
 
+  const lastAssistant =
+    [...history].reverse().find((t) => t.role === "assistant")?.text ?? null;
+
   const finish = (
     answer: string,
     engine: Engine,
     model: string,
     cached: boolean,
-    intent?: string,
-    action?: PortalAction | null
+    extra: {
+      intent?: string;
+      action?: PortalAction | null;
+      scope?: QuestionScope;
+      grounded?: boolean;
+      citations?: PortalCitation[];
+    } = {}
   ): PortalAnswer & { patientId: string | null } => ({
     answer,
     engine,
     model,
     cached,
-    intent,
-    action: action ?? null,
+    ...extra,
     followUps,
     patientId: ctx.patient?.id ?? null,
   });
@@ -923,14 +1089,52 @@ export async function askPortal(
     }
     const q = question.toLowerCase();
     if (/blink|alertness|closure|movement|reading|vital|status|how is|how are/.test(q)) {
-      return finish(liveStatus, "rules", "rules", false);
+      return finish(liveStatus, "rules", "rules", false, { scope: "record", grounded: true });
     }
+
+    // General knowledge and conversation work even before a chart is linked.
+    const route = classifyQuestion(question, null);
+    if (route.scope === "emergency") {
+      return finish(emergencyAnswer(question, null), "rules", "rules", false, {
+        intent: "emergency",
+        scope: "emergency",
+        grounded: false,
+      });
+    }
+    const smallTalk = smallTalkAnswer(question, { lastAssistant });
+    if (smallTalk && (route.scope === "chitchat" || route.scope === "meta")) {
+      return finish(smallTalk, "rules", "rules", false, {
+        intent: "conversation",
+        scope: route.scope,
+        grounded: false,
+      });
+    }
+    if (route.scope === "general" || route.scope === "mixed") {
+      const guidance = generalGuidance(question, 3);
+      const general = generalFallback(guidance.passages);
+      if (general) {
+        return finish(
+          `${general} No patient is linked to this session, so this is general information only — link a patient to apply it to their chart. ${live}`,
+          "rules",
+          "rules",
+          false,
+          {
+            intent: "general",
+            scope: "general",
+            grounded: false,
+            citations: citationFromPassages(guidance.passages),
+          }
+        );
+      }
+    }
+
     if (/listen|hear|voice|audio|speak|talk/.test(q)) {
       return finish(
         `I am text-based, but I can speak my replies through your browser's voice when voice is turned on. Right now no patient is linked, so I can only report the live readings: ${live} Link a patient in the portal to use their history and records.`,
         "rules",
         "rules",
-        false
+        false,
+        { scope: "meta" }
       );
     }
     if (/patient|history|record|medic|allerg|condition/.test(q)) {
@@ -938,14 +1142,16 @@ export async function askPortal(
         `No patient is linked to this session yet, so I cannot open a chart. ${live} Use "Link a patient (optional)" above to attach a patient and then ask about their history, medications or records.`,
         "rules",
         "rules",
-        false
+        false,
+        { scope: "record" }
       );
     }
     return finish(
       `No patient is linked to this session yet. I can help with the live readings, patient history, medications, allergies, records and SBAR handoffs. ${live} Link a patient above for the full history. Voice replies work through your browser when voice is enabled.`,
       "rules",
       "rules",
-      false
+      false,
+      { scope: "record" }
     );
   }
 
@@ -983,17 +1189,42 @@ export async function askPortal(
     };
   }
 
-  const records = await listRecords(patient.id);
-
   const historyQ = isHistoryQuestion(question);
+  const route = classifyQuestion(question, patient);
+
+  // Safety turns are never cached: the answer depends on what is happening now.
+  if (route.scope === "emergency") {
+    return finish(emergencyAnswer(question, patient), "rules", "rules", false, {
+      intent: "emergency",
+      scope: "emergency",
+      grounded: false,
+    });
+  }
+
+  // Greetings, thanks, identity questions, jokes and arithmetic are answered
+  // locally and never need a model or the chart.
+  const smallTalk = smallTalkAnswer(question, { patient, lastAssistant });
+  if (smallTalk && (route.scope === "chitchat" || route.scope === "meta")) {
+    return finish(smallTalk, "rules", "rules", false, {
+      intent: "conversation",
+      scope: route.scope,
+      grounded: false,
+    });
+  }
+
+  const [records, extras] = await Promise.all([
+    listRecords(patient.id),
+    loadKnowledgeExtras(patient.id),
+  ]);
 
   const key = cacheKey([
-    "answer",
+    "answer:v2",
     patient.id,
     detail,
     question.toLowerCase(),
     history.length ? historySignature(history) : "",
     records.map((r) => `${r.id}:${r.chars}`).join(","),
+    extrasSignature(extras),
     metricsBucket(ctx.metrics),
     ctx.findings.map((f) => f.key).join(","),
   ]);
@@ -1002,40 +1233,51 @@ export async function askPortal(
   if (cached) {
     return {
       answer: cached.text,
-      engine: "gemini",
+      engine: cached.model === "rules" ? "rules" : "gemini",
       model: cached.model,
       cached: true,
+      intent: cached.intent,
+      scope: cached.scope,
+      grounded: cached.grounded,
+      citations: cached.citations,
       followUps,
       patientId: patient.id,
     };
   }
 
-  // 1. Exact structured answers first — free and never wrong. History
-  //    questions skip this so they can use the richer history summary.
-  const exact = historyQ ? null : rulesAnswer(question, patient);
+  // 1. Exact structured answers first — free and never wrong. History and
+  //    general-knowledge questions skip this so they get the richer path.
+  const exact = historyQ || route.scope === "general" ? null : rulesAnswer(question, patient);
   if (exact) {
-    await cachePut(key, exact.text, "rules");
-    return {
-      answer: exact.text,
-      engine: "rules",
-      model: "rules",
-      cached: false,
-      intent: exact.intent,
-      followUps,
-      patientId: patient.id,
-    };
+    const scope: QuestionScope = route.scope === "mixed" ? "record" : route.scope;
+    const meta = { intent: exact.intent, scope, grounded: true };
+    await cachePut(key, exact.text, "rules", meta);
+    return finish(exact.text, "rules", "rules", false, meta);
   }
 
-  // 2. Gemini for everything else, grounded on the same material. Conversation
-  //    history is included so follow-up questions ("and her allergies?") work.
-  if (geminiConfigured()) {
-    const recordBlock = await buildRecordContext(patient.id);
-    const matched = searchRecords(question, records);
-    const matchedText = matched
-      .slice(0, 3)
-      .map((r) => `### ${r.title}${r.source ? ` (${r.source})` : ""}\n${r.text.slice(0, 4000)}`)
-      .join("\n\n");
+  // Retrieval is deterministic and offline: the same passages feed the model
+  // prompt and the local fallback, so the two can never cite different things.
+  const passages = buildPatientPassages(patient, records, extras);
+  const recordHits =
+    route.scope === "general"
+      ? { passages: [] as RetrievedPassage[], strong: false, terms: [] as string[] }
+      : retrievePassages(question, passages, {
+          limit: detail === "deep" ? 8 : 5,
+          relativeFloor: 0.16,
+        });
+  const generalHits =
+    route.scope === "record"
+      ? { passages: [] as RetrievedPassage[], strong: false, terms: [] as string[] }
+      : generalGuidance(question, 3);
 
+  const citations =
+    route.scope === "general"
+      ? citationFromPassages(generalHits.passages)
+      : mergeCitations(recordHits.passages, generalHits.passages);
+
+  // 2. Gemini for everything else, grounded on the retrieved passages and the
+  //    live signals. Conversation history makes follow-up questions work.
+  if (geminiConfigured()) {
     const conversationBlock =
       history.length > 0
         ? `CONVERSATION SO FAR\n${history
@@ -1047,103 +1289,95 @@ export async function askPortal(
       detail === "brief"
         ? "ANSWER LENGTH\nTwo sentences maximum. Lead with the direct answer."
         : detail === "deep"
-          ? "ANSWER LENGTH\nBe thorough: 5-8 sentences. Use the relevant history, the most recent observations, inserted records and current live signals. Say which record you relied on. End with what the nurse should check or do next."
+          ? "ANSWER LENGTH\nBe thorough: 5-8 sentences. Use the relevant history, the most recent observations, inserted records, general guidance and current live signals. Say which record you relied on. End with what the nurse should check or do next."
           : opts.voice
-            ? "ANSWER LENGTH\n2-3 short sentences for speech."
+            ? "ANSWER LENGTH\n2-3 short sentences for speech. No lists or markdown."
             : "ANSWER LENGTH\n3-5 sentences.";
+
+    const evidence = retrievalContext(recordHits.passages, 9000);
+    const guidance = retrievalContext(generalHits.passages, 3200);
 
     const prompt = [
       `PATIENT\n${structured(patient)}`,
-      `INSERTED RECORDS${recordBlock.omitted ? ` (${recordBlock.omitted} older record(s) omitted for length)` : ""}\n${
-        recordBlock.text || "none inserted yet"
-      }`,
-      matchedText ? `MOST RELEVANT RECORD EXCERPTS\n${matchedText}` : "",
+      evidence
+        ? `RECORD EVIDENCE\n${evidence}`
+        : "RECORD EVIDENCE\nNo part of this patient's chart matched the question.",
+      guidance ? `GENERAL GUIDANCE\n${guidance}` : "",
       `LIVE SIGNALS\n${signalBlock(ctx.findings, ctx.metrics)}`,
       conversationBlock,
       depthLine,
-      opts.voice && detail !== "deep" ? "MODE\nYou are speaking this answer aloud on the phone. Keep it concise." : "",
+      opts.voice && detail !== "deep"
+        ? "MODE\nYou are speaking this answer aloud on the phone. Keep it concise and natural."
+        : "",
       `QUESTION\n${question}`,
     ]
       .filter(Boolean)
       .join("\n\n");
 
     const result = await geminiGenerate({
-      system: ANSWER_SYSTEM,
+      system: route.scope === "general" ? GENERAL_SYSTEM : ANSWER_SYSTEM,
       prompt,
       maxTokens: detail === "deep" ? 800 : opts.voice ? 260 : detail === "brief" ? 180 : 420,
       temperature: 0.2,
+      prefer: opts.voice ? "fast" : detail === "deep" ? "deep" : "fast",
+      spoken: Boolean(opts.voice),
     });
     if (result) {
-      await cachePut(key, result.text, result.model);
-      return {
-        answer: result.text,
-        engine: "gemini",
-        model: result.model,
-        cached: false,
-        intent: historyQ ? "history" : undefined,
-        followUps,
-        patientId: patient.id,
+      const meta = {
+        intent: historyQ ? "history" : route.scope === "general" ? "general" : undefined,
+        scope: route.scope,
+        grounded: route.scope !== "general" && recordHits.passages.length > 0,
+        citations,
       };
+      await cachePut(key, result.text, result.model, meta);
+      return finish(result.text, "gemini", result.model, false, meta);
     }
   }
 
-  // 3. Honest local fallback. History questions get the full record-grounded
-  //    summary; otherwise report what the record and signals actually say.
+  // 3. Honest local fallback, ordered by what the question actually needs.
   if (historyQ) {
     const answer = historySummary(patient, records, detail === "deep");
-    await cachePut(key, answer, "rules");
-    return {
-      answer,
-      engine: "rules",
-      model: "rules",
-      cached: false,
-      intent: "history",
-      followUps,
-      patientId: patient.id,
-    };
+    const meta = { intent: "history", scope: "record" as QuestionScope, grounded: true };
+    await cachePut(key, answer, "rules", meta);
+    return finish(answer, "rules", "rules", false, meta);
+  }
+
+  if (route.scope === "general") {
+    const answer =
+      generalFallback(generalHits.passages) ??
+      `${unknownAnswer(patient)} I treated that as a general question, so I did not use the chart.`;
+    const meta = { intent: "general", scope: "general" as QuestionScope, grounded: false, citations };
+    await cachePut(key, answer, "rules", meta);
+    return finish(answer, "rules", "rules", false, meta);
+  }
+
+  if (route.scope === "mixed" && !recordHits.passages.length && generalHits.passages.length) {
+    const answer = `${generalFallback(generalHits.passages)} I could not find a patient-specific note for this in ${patient.displayName}'s chart.`;
+    const meta = { intent: "general", scope: "mixed" as QuestionScope, grounded: false, citations };
+    await cachePut(key, answer, "rules", meta);
+    return finish(answer, "rules", "rules", false, meta);
   }
 
   const q = question.toLowerCase();
   if (/listen|hear|voice|audio|speak|talk|can you/.test(q)) {
     const answer = `Yes. I can answer questions about ${patient.displayName}, report the live readings, and speak my replies through your browser when voice is enabled. ${ctx.findings.length ? `Right now ${ctx.findings.map((f) => `${f.label} ${f.reading}`).join(", ")}.` : "All monitored readings are inside their thresholds right now."}`;
-    await cachePut(key, answer, "rules");
-    return { answer, engine: "rules", model: "rules", cached: false, followUps, patientId: patient.id };
+    const meta = { scope: "meta" as QuestionScope, grounded: false };
+    await cachePut(key, answer, "rules", meta);
+    return finish(answer, "rules", "rules", false, meta);
   }
 
-  const parts: string[] = [];
-  if (ctx.findings.length) {
-    parts.push(`Attention needed: ${ctx.findings.map((f) => `${f.label} ${f.reading} (${f.note})`).join("; ")}.`);
-  } else if (ctx.metrics) {
-    parts.push("All monitored live readings are inside their thresholds right now.");
-  } else {
-    parts.push("No live readings have arrived from the patient device yet.");
-  }
-  parts.push(
-    `${patient.displayName} is ${patient.age != null ? `${patient.age} years old` : "of unknown age"}${patient.sex ? `, ${patient.sex}` : ""}${patient.room ? `, in ${patient.room}` : ""}. Primary concern: ${patient.primaryConcern ?? "not recorded"}.`
-  );
-  const activeConditions = patient.conditions.filter((c) => c.status === "active").map((c) => c.name);
-  if (activeConditions.length) parts.push(`Active conditions: ${activeConditions.join(", ")}.`);
-  const activeMeds = patient.medications.filter((m) => m.status === "active");
-  if (activeMeds.length)
-    parts.push(`Medications: ${activeMeds.map((m) => `${m.name}${m.dose ? ` ${m.dose}` : ""}`).join(", ")}.`);
-  if (patient.allergies.length)
-    parts.push(`Allergies: ${patient.allergies.map((a) => `${a.substance} (${a.severity})`).join(", ")}.`);
-  if (patient.carePlan) parts.push(`Care plan: ${patient.carePlan}.`);
-  const obs = patient.observations.slice(-3).map((o) => `${o.label} ${o.value}${o.unit ? ` ${o.unit}` : ""}`);
-  if (obs.length) parts.push(`Recent observations: ${obs.join("; ")}.`);
-  if (records.length)
-    parts.push(`Inserted records: ${records.slice(0, 3).map((r) => `"${r.title}"`).join(", ")}.`);
-  parts.push("Ask for the full history, medications, allergies, records, or an SBAR handoff for more detail.");
-  const answer = parts.join(" ");
-  await cachePut(key, answer, "rules");
-  return {
-    answer,
-    engine: "rules",
-    model: "rules",
-    cached: false,
-    followUps,
-    patientId: patient.id,
+  // A strong evidence match is quoted directly. Otherwise answer with the
+  // profile and readings, and say plainly that the specific detail is missing.
+  const answer = recordHits.strong
+    ? localEvidenceAnswer(recordHits.passages, ctx, patient)
+    : localEvidenceAnswer([], ctx, patient);
+  const meta = {
+    scope: "record" as QuestionScope,
+    grounded: recordHits.strong,
+    citations: recordHits.strong ? citations : [],
   };
+  await cachePut(key, answer, "rules", meta);
+  return finish(answer, "rules", "rules", false, meta);
 }
 
 function isHistoryQuestion(question: string): boolean {

@@ -28,6 +28,8 @@ import {
 import { createPatient, getPatient, listMessages, listPatients } from "@/lib/care/repo";
 import { getSeedPatient } from "@/lib/care/seedPatients";
 import { resetDriverForTests } from "@/lib/care/store";
+import { NextRequest } from "next/server";
+import { GET as voiceWebhookGET, POST as voiceWebhookPOST } from "@/app/api/care/voice/route";
 
 const PATIENT = getSeedPatient("pt_0001")!;
 
@@ -94,6 +96,20 @@ describe("TwiML", () => {
     expect(xml).toContain(`method="POST" action="https://x.test/voice?session=AB12&amp;turn=1"`);
     expect(xml).toContain("<Hangup/>");
     expect(xml.startsWith("<?xml")).toBe(true);
+  });
+
+  it("adds the DTMF menu only when the opening asks for it", () => {
+    const menu = twimlPrompt("Choose an option", "https://x.test/voice?session=AB12&turn=1", {
+      menu: true,
+      noInputLine: "I did not catch that.",
+    });
+    expect(menu).toContain(`<Gather input="speech dtmf" numDigits="1"`);
+    expect(menu).toContain("I did not catch that.");
+    expect(menu).toContain("<Hangup/>");
+
+    const plain = twimlPrompt("Ask your question", "https://x.test/voice");
+    expect(plain).not.toContain("dtmf");
+    expect(plain).toContain(`<Gather input="speech"`);
   });
 
   it("closes a call with a spoken goodbye", () => {
@@ -292,6 +308,45 @@ describe("voice opening", () => {
   it("is honest when no patient is linked", async () => {
     const ctx = await buildPortalContext("VOICE02");
     expect(voiceOpening(ctx).toLowerCase()).toContain("no patient is linked");
+  });
+});
+
+describe("voice webhook", () => {
+  it("offers the DTMF menu on the opening turn", async () => {
+    const res = await voiceWebhookGET(
+      new NextRequest("http://localhost/api/care/voice?session=VWH01&turn=0")
+    );
+    expect(res.status).toBe(200);
+    const xml = await res.text();
+    expect(xml).toContain('input="speech dtmf"');
+    expect(xml).toContain("press 1");
+    expect(xml).toContain("2 for the latest readings");
+  });
+
+  it("asks once more, without replaying the opening, on empty speech", async () => {
+    const res = await voiceWebhookPOST(
+      new NextRequest("http://localhost/api/care/voice?session=VWH02&turn=1", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "SpeechResult=",
+      })
+    );
+    const xml = await res.text();
+    expect(xml).toContain("did not catch");
+    expect(xml).not.toContain("press 1");
+    expect(xml).toContain("<Hangup/>");
+  });
+
+  it("treats a spoken menu digit as the matching option", async () => {
+    const res = await voiceWebhookPOST(
+      new NextRequest("http://localhost/api/care/voice?session=VWH03&turn=1", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "SpeechResult=2",
+      })
+    );
+    const xml = await res.text();
+    expect(xml.toLowerCase()).toContain("readings");
   });
 });
 

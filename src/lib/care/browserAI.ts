@@ -269,29 +269,131 @@ function pickVoice(): SpeechSynthesisVoice | null {
   );
 }
 
-export function speak(text: string, opts: { onStart?: () => void; onEnd?: () => void } = {}): () => void {
+function voiceByLanguage(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
+  return (
+    voices.find((v) => /^en[-_]GB/i.test(v.lang) && /female|woman|natural|google/i.test(v.name)) ||
+    voices.find((v) => /^en[-_]GB/i.test(v.lang)) ||
+    voices.find((v) => /^en[-_]/i.test(v.lang)) ||
+    voices[0] ||
+    null
+  );
+}
+
+/** Splits a long answer into utterance-sized sentences for steady playback. */
+function speechChunks(text: string, max = 180): string[] {
+  const clean = text.replace(/\s+/g, " ").trim();
+  if (!clean) return [];
+  const sentences = clean.match(/[^.!?]+[.!?]+|[^.!?]+$/g) ?? [clean];
+  const chunks: string[] = [];
+  let current = "";
+  for (const sentence of sentences) {
+    const next = sentence.trim();
+    if (!next) continue;
+    if (current && current.length + next.length + 1 > max) {
+      chunks.push(current);
+      current = next;
+    } else {
+      current = current ? `${current} ${next}` : next;
+    }
+    // A single monster sentence is split on commas or hard slices.
+    while (current.length > max) {
+      const breakAt = Math.max(current.lastIndexOf(", ", max), current.lastIndexOf("; ", max));
+      const at = breakAt > max * 0.5 ? breakAt + 1 : max;
+      chunks.push(current.slice(0, at).trim());
+      current = current.slice(at).trim();
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+export function speak(
+  text: string,
+  opts: { onStart?: () => void; onEnd?: () => void; voiceName?: string } = {}
+): () => void {
   if (!speechSynthesisAvailable() || !text.trim()) {
     opts.onEnd?.();
     return () => undefined;
   }
 
+  let cancelled = false;
+  let started = false;
+  let runOnce = false;
+  let watchdog: number | null = null;
+
+  const chunks = speechChunks(text);
+  const voice = (() => {
+    const voices = window.speechSynthesis.getVoices();
+    if (opts.voiceName) return voices.find((v) => v.name === opts.voiceName) ?? pickVoice();
+    return pickVoice() ?? voiceByLanguage(voices);
+  })();
+
+  const finish = () => {
+    if (watchdog != null) window.clearTimeout(watchdog);
+    watchdog = null;
+    if (!cancelled) opts.onEnd?.();
+  };
+
+  const speakAt = (index: number) => {
+    if (cancelled) return;
+    if (index >= chunks.length) {
+      finish();
+      return;
+    }
+    try {
+      window.speechSynthesis.resume();
+    } catch {
+      /* ignore */
+    }
+    const utter = new SpeechSynthesisUtterance(chunks[index]);
+    const activeVoice = voice ?? pickVoice() ?? voiceByLanguage(window.speechSynthesis.getVoices());
+    utter.lang = activeVoice?.lang || "en-GB";
+    utter.rate = 0.94;
+    utter.pitch = 1.0;
+    utter.volume = 1.0;
+    if (activeVoice) utter.voice = activeVoice;
+    let advanced = false;
+    const advance = () => {
+      if (advanced) return;
+      advanced = true;
+      if (watchdog != null) window.clearTimeout(watchdog);
+      watchdog = null;
+      speakAt(index + 1);
+    };
+    utter.onstart = () => {
+      if (!started) {
+        started = true;
+        opts.onStart?.();
+      }
+      // Chrome sometimes stays paused after a long utterance, and a voice can
+      // stall without firing end/error at all. Resume early; if the chunk is
+      // still stuck well past its expected duration, move to the next one so a
+      // call is never left waiting on silent synthesis.
+      if (watchdog != null) window.clearTimeout(watchdog);
+      watchdog = window.setTimeout(() => {
+        try {
+          window.speechSynthesis.cancel();
+        } catch {
+          /* ignore */
+        }
+        advance();
+      }, Math.max(12_000, chunks[index].length * 130 + 6_000));
+    };
+    utter.onend = advance;
+    utter.onerror = advance;
+    window.speechSynthesis.speak(utter);
+  };
+
   const run = () => {
+    if (cancelled || runOnce) return;
+    runOnce = true;
     try {
       window.speechSynthesis.cancel();
       window.speechSynthesis.resume();
-      const utter = new SpeechSynthesisUtterance(text);
-      utter.lang = "en-US";
-      utter.rate = 0.92;
-      utter.pitch = 1.0;
-      utter.volume = 1.0;
-      const voice = pickVoice();
-      if (voice) utter.voice = voice;
-      utter.onstart = () => opts.onStart?.();
-      utter.onend = () => opts.onEnd?.();
-      utter.onerror = () => opts.onEnd?.();
-      window.speechSynthesis.speak(utter);
+      // A short gap lets the engine finish cancelling any previous utterance.
+      window.setTimeout(() => speakAt(0), 45);
     } catch {
-      opts.onEnd?.();
+      finish();
     }
   };
 
@@ -312,6 +414,8 @@ export function speak(text: string, opts: { onStart?: () => void; onEnd?: () => 
   }
 
   return () => {
+    cancelled = true;
+    if (watchdog != null) window.clearTimeout(watchdog);
     try {
       window.speechSynthesis.cancel();
     } catch {

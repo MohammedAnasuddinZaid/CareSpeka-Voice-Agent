@@ -107,6 +107,9 @@ interface Turn {
   model?: string;
   cached?: boolean;
   intent?: string;
+  scope?: "record" | "general" | "mixed" | "chitchat" | "meta" | "emergency";
+  grounded?: boolean;
+  citations?: Array<{ title: string; kind: string; source?: string; at?: string }>;
 }
 
 interface AlertEntry {
@@ -391,7 +394,7 @@ export default function PortalAssistant({
         const r = res.result;
         setTurns((t) => [
           ...t,
-          { id: ++idRef.current, role: "assistant", text: r.answer, engine: r.engine, model: r.model, cached: r.cached, intent: r.intent },
+          { id: ++idRef.current, role: "assistant", text: r.answer, engine: r.engine, model: r.model, cached: r.cached, intent: r.intent, scope: r.scope, grounded: r.grounded, citations: r.citations },
         ]);
         setFollowUps(r.followUps ?? []);
         speakLine(r.answer);
@@ -995,6 +998,29 @@ const removePatient = async (id: string) => {
                         <span className="rounded-full bg-white/70 px-1.5 py-0.5 text-[10px] font-semibold text-[#6e6e6e]">
                           {t.intent.replace(/_/g, " ")}
                         </span>
+                      ) : null}
+                      {t.scope === "general" ? (
+                        <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
+                          general guidance
+                        </span>
+                      ) : t.grounded ? (
+                        <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
+                          from chart
+                        </span>
+                      ) : null}
+                      {t.citations?.length ? (
+                        <div className="mt-1 flex w-full flex-wrap gap-1 border-t border-black/5 pt-1">
+                          {t.citations.slice(0, 4).map((c, i) => (
+                            <span
+                              key={`${c.title}-${i}`}
+                              className="rounded bg-white/70 px-1.5 py-0.5 text-[10px] text-[#6e6e6e]"
+                              title={c.source ? `${c.title} — ${c.source}` : c.title}
+                            >
+                              {c.kind === "knowledge" ? "Guidance: " : "Source: "}
+                              {c.title.replace(/^General guidance — /, "").slice(0, 42)}
+                            </span>
+                          ))}
+                        </div>
                       ) : null}
                     </div>
                   ) : null}

@@ -465,6 +465,12 @@ export interface PortalAnswer {
   action?: PortalMessageAction | null;
   /** Suggested next questions, grounded in the current patient and readings. */
   followUps?: string[];
+  /** What kind of question was answered, so general guidance is labelled honestly. */
+  scope?: "record" | "general" | "mixed" | "chitchat" | "meta" | "emergency";
+  /** True when the answer used this patient's chart or live readings. */
+  grounded?: boolean;
+  /** Records, transcripts or knowledge passages the answer consulted. */
+  citations?: Array<{ title: string; kind: string; source?: string; at?: string }>;
 }
 
 export interface PortalMessageAction {

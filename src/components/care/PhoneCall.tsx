@@ -19,6 +19,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   ClipboardCopy,
+  Download,
   Eye,
   Link2,
   Loader2,
@@ -40,6 +41,7 @@ import {
   carePortalLink,
   carePortalSbar,
   carePortalUnlink,
+  carePostTranscript,
   type PortalContext,
   type PortalSbar,
 } from "@/lib/careClient";
@@ -79,6 +81,60 @@ interface Turn {
   role: "caller" | "agent";
   text: string;
   engine?: string;
+  scope?: "record" | "general" | "mixed" | "chitchat" | "meta" | "emergency";
+  grounded?: boolean;
+  citations?: Array<{ title: string; kind: string; source?: string; at?: string }>;
+}
+
+const CALL_TURNS_PREFIX = "carespeak.call.turns.v1";
+const CALL_TURNS_LIMIT = 40;
+
+function callTurnsKey(sessionId: string): string {
+  return `${CALL_TURNS_PREFIX}.${sessionId}`;
+}
+
+/**
+ * The in-call transcript survives a reload, a phone lock or a browser crash.
+ * It is scoped to the session so two sessions never share a conversation.
+ */
+function loadSavedTurns(sessionId: string): Turn[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(callTurnsKey(sessionId));
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((t): t is Record<string, unknown> => Boolean(t) && typeof t === "object")
+      .filter((t) => (t.role === "caller" || t.role === "agent") && typeof t.text === "string")
+      .slice(-CALL_TURNS_LIMIT)
+      .map((t, i) => ({
+        id: typeof t.id === "number" && Number.isFinite(t.id) ? t.id : i + 1,
+        role: t.role as Turn["role"],
+        text: String(t.text),
+        engine: typeof t.engine === "string" ? t.engine : undefined,
+        scope: typeof t.scope === "string" ? (t.scope as Turn["scope"]) : undefined,
+        grounded: typeof t.grounded === "boolean" ? t.grounded : undefined,
+        citations: Array.isArray(t.citations)
+          ? (t.citations as Turn["citations"])
+          : undefined,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function saveTurns(sessionId: string, turns: Turn[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (turns.length) {
+      window.localStorage.setItem(callTurnsKey(sessionId), JSON.stringify(turns.slice(-CALL_TURNS_LIMIT)));
+    } else {
+      window.localStorage.removeItem(callTurnsKey(sessionId));
+    }
+  } catch {
+    /* storage full or blocked — the live transcript still works */
+  }
 }
 
 function reading(value: number | undefined, suffix: string, digits = 0): string | null {
@@ -182,15 +238,37 @@ export default function BrowserCall({
   voiceRef.current = voiceOn;
   const speechGenRef = useRef(0);
   const turnIdRef = useRef(0);
+  const [historyReady, setHistoryReady] = useState("");
+  const restoredHistoryRef = useRef("");
+  const activeSessionIdRef = useRef(activeSessionId);
+  activeSessionIdRef.current = activeSessionId;
   const askRef = useRef<(text: string) => Promise<void>>(async () => undefined);
   const endRef = useRef<HTMLDivElement | null>(null);
 
-  const append = useCallback((role: Turn["role"], text: string, engine?: string) => {
-    const clean = text.replace(/\s+/g, " ").trim();
-    if (!clean) return;
-    const id = ++turnIdRef.current;
-    setTurns((prev) => [...prev.slice(-40), { id, role, text: clean, engine }]);
-  }, []);
+  const append = useCallback(
+    (
+      role: Turn["role"],
+      text: string,
+      engine?: string,
+      meta?: Pick<Turn, "scope" | "grounded" | "citations">
+    ) => {
+      const clean = text.replace(/\s+/g, " ").trim();
+      if (!clean) return;
+      const id = ++turnIdRef.current;
+      setTurns((prev) => [...prev.slice(-40), { id, role, text: clean, engine, ...meta }]);
+      // Persist to the session transcript when the nurse is signed in. Pair-only
+      // calls are not allowed to write nurse/agent turns and fail silently.
+      const session = activeSessionIdRef.current;
+      if (session) {
+        carePostTranscript(
+          session,
+          { role: role === "caller" ? "nurse" : "agent", text: clean, engine },
+          null
+        ).catch(() => undefined);
+      }
+    },
+    []
+  );
 
   // --- speech in ------------------------------------------------------------
 
@@ -282,7 +360,11 @@ export default function BrowserCall({
           detail,
           history,
         });
-        append("agent", res.result.answer, res.result.engine);
+        append("agent", res.result.answer, res.result.engine, {
+          scope: res.result.scope,
+          grounded: res.result.grounded,
+          citations: res.result.citations,
+        });
         speakLine(res.result.answer);
         setFollowUps(res.result.followUps ?? []);
       } catch (err) {
@@ -316,6 +398,9 @@ export default function BrowserCall({
     rec.lang = "en-US";
 
     rec.onresult = (e) => {
+      // Never transcribe the agent's own spoken answer (echo) or a turn that is
+      // already being processed.
+      if (speakingRef.current || thinkingRef.current) return;
       let transcript = "";
       for (let i = e.resultIndex; i < e.results.length; i += 1) {
         transcript += e.results[i]?.[0]?.transcript ?? "";
@@ -381,6 +466,31 @@ export default function BrowserCall({
     setSessionReady(true);
     if (id) rememberCareSession(id, remembered?.pair ?? null);
   }, [pair, sessionId]);
+
+  // --- durable in-call transcript ------------------------------------------
+
+  // Restore the saved transcript once per session, before new turns append.
+  useEffect(() => {
+    if (!activeSessionId) {
+      restoredHistoryRef.current = "";
+      setHistoryReady("");
+      return;
+    }
+    if (restoredHistoryRef.current === activeSessionId) return;
+    restoredHistoryRef.current = activeSessionId;
+    const saved = loadSavedTurns(activeSessionId);
+    if (saved.length) {
+      turnIdRef.current = Math.max(turnIdRef.current, ...saved.map((t) => t.id));
+      setTurns(saved);
+    }
+    setHistoryReady(activeSessionId);
+  }, [activeSessionId]);
+
+  // Persist only after the restore gate, so the first render never wipes it.
+  useEffect(() => {
+    if (!activeSessionId || historyReady !== activeSessionId) return;
+    saveTurns(activeSessionId, turns);
+  }, [activeSessionId, historyReady, turns]);
 
   // --- load / refresh the patient context -----------------------------------
 
@@ -581,6 +691,54 @@ export default function BrowserCall({
       setSendError("Could not copy the transcript. Your browser blocked clipboard access.");
     }
   }, []);
+
+  /** Download the transcript as a plain-text note for the patient file. */
+  const downloadTranscript = useCallback(() => {
+    const history = turnsRef.current;
+    if (!history.length) return;
+    const session = activeSessionIdRef.current || "session";
+    const patientName = context?.patient?.displayName ?? "No patient linked";
+    const header = [
+      "CareSpeak — browser care call transcript",
+      `Session: ${session}`,
+      `Patient: ${patientName}`,
+      `Exported: ${new Date().toISOString()}`,
+      "",
+      "Synthetic demo data unless this deployment is connected to a real record.",
+    ];
+    const body = history.flatMap((t) => {
+      const label = t.role === "caller" ? "Nurse" : "CareSpeak agent";
+      const tags = [
+        t.engine === "gemini" ? "gemini" : t.engine === "rules" ? "local rules" : "",
+        t.scope === "general" ? "general guidance" : t.grounded ? "from chart" : "",
+      ].filter(Boolean);
+      const lines = [`${label}${tags.length ? ` [${tags.join(", ")}]` : ""}: ${t.text}`];
+      if (t.citations?.length) {
+        lines.push(
+          `    Sources: ${t.citations
+            .slice(0, 4)
+            .map((c) => c.title.replace(/^General guidance — /, ""))
+            .join("; ")}`
+        );
+      }
+      return lines;
+    });
+    const blob = new Blob([[...header, "", ...body, ""].join("\n")], {
+      type: "text/plain;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `carespeak-${session.toLowerCase()}-${new Date()
+      .toISOString()
+      .slice(0, 19)
+      .replace(/[:T]/g, "-")}.txt`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, [context?.patient?.displayName]);
+
   const linkPatient = useCallback(async () => {
     if (!activeSessionId || !pickedPatient || linking) return;
     setLinking(true);
@@ -938,6 +1096,14 @@ export default function BrowserCall({
               >
                 <ClipboardCopy className="h-3 w-3" /> {copied ? "Copied" : "Copy transcript"}
               </button>
+              <button
+                type="button"
+                onClick={downloadTranscript}
+                disabled={!turns.length}
+                className="inline-flex items-center gap-1 rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-[11px] font-semibold text-[#4b4b4b] hover:border-[#c63a22] hover:text-[#c63a22] disabled:opacity-50"
+              >
+                <Download className="h-3 w-3" /> Download
+              </button>
               <label className="inline-flex items-center gap-1.5 text-[11px] text-[#6e6e6e]">
                 <span className="font-semibold">Depth</span>
                 <select
@@ -1002,7 +1168,15 @@ export default function BrowserCall({
               }`}
             >
               {t.text}
-              {t.engine === "rules" ? (
+              {t.scope === "general" ? (
+                <span className="mt-1 block text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+                  general guidance · not from the chart
+                </span>
+              ) : t.citations?.length ? (
+                <span className="mt-1 block text-[10px] opacity-60">
+                  Sources: {t.citations.slice(0, 3).map((c) => c.title.replace(/^General guidance — /, "")).join(" · ")}
+                </span>
+              ) : t.engine === "rules" ? (
                 <span className="mt-1 block text-[10px] opacity-60">rules engine · off-line fallback</span>
               ) : null}
             </div>

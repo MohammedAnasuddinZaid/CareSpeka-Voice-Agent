@@ -103,9 +103,11 @@ function say(text: string): string {
   return `<Say voice="${VOICE_NAME}" language="${VOICE_LANG}">${escapeXml(text)}</Say>`;
 }
 
-function gather(actionUrl: string): string {
+function gather(actionUrl: string, opts: { menu?: boolean } = {}): string {
+  const input = opts.menu ? "speech dtmf" : "speech";
+  const digits = opts.menu ? ' numDigits="1"' : "";
   return (
-    `<Gather input="speech" language="${VOICE_LANG}" speechTimeout="auto" ` +
+    `<Gather input="${input}"${digits} language="${VOICE_LANG}" speechTimeout="auto" ` +
     `speechModel="phone_call" method="POST" action="${escapeXml(actionUrl)}"></Gather>`
   );
 }
@@ -115,14 +117,21 @@ function wrap(parts: string[]): string {
 }
 
 /** Speak a line, then listen for the caller's next utterance. */
-export function twimlPrompt(text: string, actionUrl: string): string {
+export function twimlPrompt(
+  text: string,
+  actionUrl: string,
+  opts: { menu?: boolean; noInputLine?: string } = {}
+): string {
   // If the caller says nothing, Twilio falls through past <Gather>; give a
   // graceful closing line and hang up rather than leaving the line open (which
   // would burn the free plan's minutes).
   return wrap([
     say(text),
-    gather(actionUrl),
-    say("I did not hear anything. Please call back, or ask the nurse directly. Goodbye."),
+    gather(actionUrl, opts),
+    say(
+      opts.noInputLine ??
+        "I did not hear anything. Please call back, or ask the nurse directly. Goodbye."
+    ),
     "<Hangup/>",
   ]);
 }

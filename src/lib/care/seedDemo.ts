@@ -29,6 +29,9 @@ import type {
 let inFlight: Promise<void> | null = null;
 let recordsInFlight: Promise<void> | null = null;
 
+/** Bump when DEMO_RECORDS changes so existing stores receive the new documents. */
+const RECORDS_SEED_VERSION = 2;
+
 export function ensureDemoSeed(): Promise<void> {
   // Never let demo seeding break a real request.
   if (!inFlight) inFlight = run().catch(() => undefined);
@@ -55,7 +58,8 @@ async function seedRecords(): Promise<void> {
   if ((process.env.CARE_SEED_DEMO ?? "").toLowerCase() === "false") return;
 
   const d = await getDriver();
-  if (await d.getDoc(K.recordsSeed)) return;
+  const guard = (await d.getDoc(K.recordsSeed)) as { version?: number; seeded?: number } | null;
+  if (guard && Number(guard.version ?? 0) >= RECORDS_SEED_VERSION) return;
 
   const existingPatients = new Set<string>();
   for (const p of SYNTHETIC_PATIENTS) {
@@ -69,7 +73,7 @@ async function seedRecords(): Promise<void> {
     if (await d.getDoc(K.patientSeeded)) {
       await d.setDoc(K.recordsSeed, {
         at: isoNow(),
-        version: 1,
+        version: RECORDS_SEED_VERSION,
         seeded: 0,
         note: "no synthetic patients remain",
       });
@@ -113,7 +117,7 @@ async function seedRecords(): Promise<void> {
     seeded += 1;
   }
 
-  await d.setDoc(K.recordsSeed, { at: isoNow(), version: 1, seeded });
+  await d.setDoc(K.recordsSeed, { at: isoNow(), version: RECORDS_SEED_VERSION, seeded });
   if (seeded > 0) {
     await d.appendList(
       K.audit,
@@ -306,6 +310,186 @@ Erythema marked with a pen and photographed for comparison. Review arranged in t
     text: `Temperature 37.2 °C, pain 2/10 at rest and 4/10 on movement. Erythema not spreading. No vomiting and appetite improving.
 Taking amoxicillin-clavulanate as prescribed. Reports mild loose stools but is drinking well.
 Continue the antibiotic course, keep the wound clean and dry, and attend the arranged wound review.`,
+  },
+  {
+    id: "rec_seed_pt_0007_discharge",
+    patientId: "pt_0007",
+    title: "Discharge summary — left hip hemiarthroplasty",
+    source: "Hospital discharge",
+    daysAgo: 8,
+    text: `Admitted after a mechanical fall at home. Left femoral neck fracture, treated with a left hemiarthroplasty under spinal anaesthesia. No postoperative dislocation or wound infection.
+Post-operative haemoglobin 98 g/L, stable. Blood pressure 118/72 mmHg, heart rate 78 bpm in atrial fibrillation.
+Medication on discharge: apixaban 5 mg twice daily continued, bisoprolol 2.5 mg daily, calcium and vitamin D, paracetamol as needed, lactulose for constipation. Codeine was avoided because it causes confusion and severe constipation.
+Mobility: frame and one assistant. Falls advice given: sit on the edge of the bed for a minute before standing, use the call bell, and keep the walking frame within reach.
+Follow-up: physiotherapy, district nurse wound check and fracture liaison service.`,
+  },
+  {
+    id: "rec_seed_pt_0007_therapy",
+    patientId: "pt_0007",
+    title: "Physiotherapy and falls assessment",
+    source: "Physiotherapy",
+    daysAgo: 2,
+    text: `Patient reports intermittent unsteadiness, particularly first thing in the morning and after sitting for a long time. No loss of consciousness and no fall since admission.
+Lying blood pressure 126/74, standing at one minute 112/68 — a fall of 14 mmHg systolic with mild dizziness.
+Mobilised 18 steps with a frame and one assistant. Right hip wound intact, dry and not tender.
+Plan: continue supervised transfers, check postural blood pressure before morning mobilisation, ensure the call bell is in reach, and review sedating medicines. Apixaban increases bruising risk, so the room was cleared of trip hazards.`,
+  },
+  {
+    id: "rec_seed_pt_0008_nephrology",
+    patientId: "pt_0008",
+    title: "Nephrology review — CKD stage 4",
+    source: "Clinic letter",
+    daysAgo: 18,
+    text: `Creatinine 285 µmol/L, eGFR 21 mL/min/1.73m², potassium 5.4 mmol/L, bicarbonate 19 mmol/L. Urate 0.52 mmol/L.
+Blood pressure 152/88 mmHg. Weight 82.0 kg with no peripheral oedema.
+Metformin reduced to 500 mg once daily. Amlodipine continued. Sodium bicarbonate started for mild metabolic acidosis. Allopurinol remains at 100 mg daily because of renal impairment, with a plan to titrate slowly.
+Discussed a low-potassium, renal-friendly diet and fluid advice. Strongly advised to avoid ibuprofen and other NSAIDs because of the previous acute kidney injury.
+Repeat bloods in two weeks and review after the current gout flare.`,
+  },
+  {
+    id: "rec_seed_pt_0008_gout",
+    patientId: "pt_0008",
+    title: "Telephone note — acute gout flare",
+    source: "Telephone note",
+    daysAgo: 3,
+    text: `Right first metatarsophalangeal joint painful, swollen and red for two days. Unable to wear a shoe. No fever or shivering.
+Colchicine 500 µg twice daily started for the flare, with a planned short course. Allopurinol continued rather than stopped. Ibuprofen must not be used because of CKD stage 4 and the previous NSAID-related kidney injury.
+Advised rest, ice, elevation and adequate fluids within his renal fluid plan. Safety-netted for spreading redness, fever, confusion or reduced urine output. Nephrology informed.`,
+  },
+  {
+    id: "rec_seed_pt_0009_maternity",
+    patientId: "pt_0009",
+    title: "Maternity discharge summary — pre-eclampsia",
+    source: "Hospital discharge",
+    daysAgo: 10,
+    text: `Emergency caesarean section at 37 weeks for severe pre-eclampsia. A healthy baby was delivered; mother and baby both well.
+Blood pressure remained elevated after delivery, so labetalol 200 mg twice daily was started. Postnatal enoxaparin 40 mg subcutaneously daily for six weeks because of increased thrombosis risk.
+Urine protein:creatinine ratio 32 mg/mmol and haemoglobin 104 g/L on discharge.
+Safety advice: seek urgent review for severe headache, visual flashes, epigastric or right-upper-quadrant pain, breathlessness, reduced urine output or a blood pressure above 160/110.
+Follow-up: community midwife, GP blood-pressure review and a postnatal mental-health check. Breastfeeding is established and labetalol is considered compatible.`,
+  },
+  {
+    id: "rec_seed_pt_0009_bp",
+    patientId: "pt_0009",
+    title: "Postnatal blood-pressure and wound log",
+    source: "Patient-reported",
+    daysAgo: 2,
+    text: `Home blood pressure readings: 152/96 on day one, 146/94 on day two, 142/90 on day three and 138/88 on day four, each taken after five minutes seated with the cuff on the left arm.
+Mild frontal headache on day two, settled with paracetamol and rest. No visual disturbance, no epigastric pain and no breathlessness.
+Caesarean wound red at the right edge on day three; practice nurse reviewed, swab taken and oral antibiotics started. Wound now less tender with no discharge.
+Sleeping in short blocks because of night feeds. Appetite improving and drinking well.`,
+  },
+  {
+    id: "rec_seed_pt_0010_tia",
+    patientId: "pt_0010",
+    title: "Discharge summary — transient ischaemic attack",
+    source: "Hospital discharge",
+    daysAgo: 19,
+    text: `Presented with sudden left-arm weakness and slurred speech that resolved within 40 minutes. CT brain showed no haemorrhage or acute infarct. Carotid imaging normal.
+Known atrial fibrillation. CHA₂DS₂-VASc score 4, so anticoagulation was indicated. Warfarin started with a target INR of 2.0–3.0; the patient declined a direct oral anticoagulant because of cost.
+Aspirin was avoided because of a previous wheeze and facial flushing reaction.
+Medication: warfarin at 18:00, bisoprolol 5 mg daily, atorvastatin 40 mg at night and ramipril 5 mg daily.
+Safety advice: report black stool, blood in urine, unusual bruising, severe headache or any new weakness or speech change.`,
+  },
+  {
+    id: "rec_seed_pt_0010_inr",
+    patientId: "pt_0010",
+    title: "Anticoagulation clinic letter — INR review",
+    source: "Clinic letter",
+    daysAgo: 6,
+    text: `INR 3.1, above the target range of 2.0–3.0. No bleeding reported. Warfarin reduced from 5 mg to 4 mg daily for three days, then 4 mg on alternate days with 5 mg on the other days; repeat INR in one week.
+Current medicines reviewed: no new antibiotics, no NSAIDs and no herbal supplements. Alcohol intake modest.
+The patient reports gum bleeding when brushing and a small forearm bruise after knocking his arm. Advised to use a soft toothbrush and report any black stool, blood in the urine or prolonged nosebleed.
+Next INR check arranged. Target remains 2.0–3.0.`,
+  },
+  {
+    id: "rec_seed_pt_0011_rheumatology",
+    patientId: "pt_0011",
+    title: "Rheumatology review — methotrexate monitoring",
+    source: "Clinic letter",
+    daysAgo: 25,
+    text: `Seropositive rheumatoid arthritis with moderate disease activity. Morning stiffness about 45 minutes, symmetrical small-joint swelling and fatigue.
+Bloods: CRP 28 mg/L, ESR 42 mm/h, haemoglobin 108 g/L, white cell count and liver enzymes within range. Renal function stable.
+Methotrexate 15 mg once weekly continued, with folic acid 5 mg on a different day. Hydroxychloroquine and prednisolone 5 mg daily continued. Alendronic acid weekly for steroid-related osteoporosis.
+Advised that methotrexate is immunosuppressive: report fever, cough, breathlessness or a sore throat promptly, and hold the weekly dose during a significant infection until reviewed. Avoid live vaccines.`,
+  },
+  {
+    id: "rec_seed_pt_0011_triage",
+    patientId: "pt_0011",
+    title: "Telephone triage — cough and low-grade fever",
+    source: "Telephone note",
+    daysAgo: 2,
+    text: `Two days of dry cough, fatigue and a temperature of 37.9 °C. No breathlessness at rest, no chest pain and no haemoptysis. Oxygen saturation 97% on room air.
+On methotrexate 15 mg weekly, prednisolone 5 mg daily and hydroxychloroquine. The next methotrexate dose was withheld pending review.
+Advised paracetamol, fluids and rest. Safety-netted for increasing breathlessness, fever above 38.5 °C, confusion or a productive cough with green sputum.
+Rheumatology and the GP both informed. Same-day clinical review arranged because of immunosuppression.`,
+  },
+  {
+    id: "rec_seed_pt_0012_diabetes",
+    patientId: "pt_0012",
+    title: "Paediatric diabetes discharge plan",
+    source: "Hospital discharge",
+    daysAgo: 9,
+    text: `Eight-year-old boy admitted in diabetic ketoacidosis with glucose 28 mmol/L, blood ketones 4.2 mmol/L and pH 7.18. Treated with intravenous fluids and an insulin infusion, then transitioned to subcutaneous insulin.
+Discharge regimen: insulin glargine 8 units at bedtime and insulin lispro 4 units with meals, adjusted for carbohydrate intake and correction doses. Glucagon 0.5 mg intramuscular for severe hypoglycaemia, with kits at home and at school.
+Parent has been taught glucose and ketone monitoring, injection technique, sick-day rules and hypoglycaemia recognition. HbA1c at diagnosis was 11.2%.
+School care plan agreed. Diabetes educator review in one week and paediatric clinic in four weeks.`,
+  },
+  {
+    id: "rec_seed_pt_0012_home",
+    patientId: "pt_0012",
+    title: "Home glucose and ketone log",
+    source: "Patient-reported",
+    daysAgo: 2,
+    text: `Bedtime blood glucose 14.2 mmol/L with blood ketones 0.8 mmol/L. Earlier readings: 11.6 before dinner and 9.8 at lunchtime.
+No vomiting, abdominal pain or deep breathing. Drinking well and passing urine normally. Parent gave the correction dose according to the discharge plan and encouraged water.
+Repeat glucose and ketones after two hours: glucose 11.4 mmol/L, ketones 0.4 mmol/L.
+Message sent to the diabetes team. Parent advised to check ketones four-hourly while unwell and to seek urgent help for ketones above 1.5 mmol/L, vomiting, drowsiness or fast breathing.`,
+  },
+  {
+    id: "rec_seed_pt_0013_stroke",
+    patientId: "pt_0013",
+    title: "Stroke unit discharge summary",
+    source: "Hospital discharge",
+    daysAgo: 8,
+    text: `Left middle cerebral artery infarct presenting with right-sided weakness and mild expressive aphasia. Arrived outside the thrombolysis window; managed on the stroke unit with antiplatelet therapy and rehabilitation.
+Known atrial fibrillation. Clopidogrel 75 mg daily started after imaging; atorvastatin 80 mg at night and metoprolol 25 mg twice daily continued.
+Swallow assessment showed aspiration risk with thin fluids, so a soft diet and thickened fluids were recommended. NIHSS 4 at discharge.
+Blood pressure 148/86 mmHg, heart rate 76 bpm, oxygen saturation 96% on room air.
+Plan: continue physiotherapy, occupational therapy and speech therapy; repeat swallow assessment; screen for low mood; and review secondary prevention.`,
+  },
+  {
+    id: "rec_seed_pt_0013_salt",
+    patientId: "pt_0013",
+    title: "Speech and language therapy note",
+    source: "Speech and language therapy",
+    daysAgo: 6,
+    text: `Modified barium swallow showed delayed swallow trigger and mild aspiration with thin liquids. Recommended thickened fluids at level 2 and a soft, moist diet. No hard, crumbly or mixed-consistency foods.
+Patient can follow one-step instructions and uses yes/no reliably. Expressive language is effortful but improving; word-finding difficulties remain.
+Carer advised to sit the patient upright at 90 degrees, keep conversation quiet during meals and stop if coughing or a wet voice develops.
+Review in one week and consider upgrading the diet if the repeat assessment is safe.`,
+  },
+  {
+    id: "rec_seed_pt_0014_sepsis",
+    patientId: "pt_0014",
+    title: "Sepsis admission and discharge summary",
+    source: "Hospital discharge",
+    daysAgo: 6,
+    text: `Admitted with fever 39.1 °C, confusion, hypotension 92/58 mmHg and a raised white cell count from a urinary source. Sepsis bundle completed within one hour: blood cultures, lactate, intravenous fluids and antibiotics.
+Penicillin allergy documented as rash and lip swelling, so cefuroxime was used instead. Catheter replaced and urine sent for culture.
+Renal function improved with fluids. Glucose remained between 8 and 11 mmol/L on reduced metformin.
+Discharge plan: complete seven days of intravenous antibiotics through the hospital-at-home team, monitor temperature and urine output, continue tamsulosin, and arrange a trial without catheter after treatment.`,
+  },
+  {
+    id: "rec_seed_pt_0014_catheter",
+    patientId: "pt_0014",
+    title: "Catheter care and observation plan",
+    source: "Community nursing",
+    daysAgo: 1,
+    text: `Indwelling urinary catheter draining clear yellow urine, 40 mL/hour over the last four hours. No suprapubic pain, no leakage and the bag is below bladder level.
+Temperature 36.9 °C, blood pressure 108/64 mmHg, heart rate 92 bpm, respiratory rate 18/min. White cell count down to 11.2 ×10⁹/L. Blood glucose 9.1 mmol/L.
+Catheter care: wash daily with water, keep the bag off the floor, empty when two-thirds full and secure the tubing to prevent traction.
+Safety advice: report fever, shivering, confusion, lower abdominal pain, reduced urine output or cloudy, offensive urine. Trial without catheter planned after the antibiotic course.`,
   },
 ];
 

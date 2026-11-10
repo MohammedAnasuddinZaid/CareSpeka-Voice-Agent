@@ -16,7 +16,7 @@ Browser-to-browser AI healthcare voice calls, built on top of CareSpeak × Voice
 6. The **nurse's browser hosts the AI**: it hears the patient, transcribes, reasons, and replies — out loud on the patient's phone.
 7. Everything is written to a **live transcript**, and ending the session produces a grounded, **reviewable clinical report** plus an **audit trail**.
 
-Nothing is sent to a paid API. If the on-device models are not loaded, a deterministic, clinically cautious **rule-based care engine** keeps the demo working — clearly labelled as such.
+Nothing is required from a paid API. If the on-device models are not loaded, a deterministic, clinically cautious **rule-based care engine** keeps the demo working — clearly labelled as such. When `GEMINI_API_KEY` is set, the server can also use Gemini to phrase an answer over the retrieved evidence; without a key, or when the model is unavailable, the same evidence is answered locally.
 
 ---
 
@@ -27,7 +27,11 @@ Nothing is sent to a paid API. If the on-device models are not loaded, a determi
 - the agent greets the caller with the linked patient's briefing (name, concern, live readings);
 - the caller speaks with the browser Web Speech API, or types when it is unavailable;
 - replies are spoken with speech synthesis and always shown as a transcript;
+- answers are retrieved from the whole authorised chart (profile, conditions, medications, allergies, observations, encounters, care plan, inserted documents, call transcripts, reports, tasks and messages) and labelled **from chart** or **general guidance**;
+- the transcript is saved per session in the browser, restored after a reload, and can be copied or downloaded as a text note;
 - "send a message to …" dictation is executed for real against the patient record.
+
+The Twilio webhook offers a phone-keypad menu on the opening turn: **1** repeat the briefing, **2** read the live readings, **3** flag the call as urgent in the audit trail, **9** end the call. Empty speech gets one polite retry rather than a replayed opening.
 
 It needs **no Twilio account, no phone number, and no telephony minutes**. The patient's screen (`DemoCallButton`) and the nurse portal (`PortalAssistant`) both expose it as **Browser call**; the panel also shows a QR that moves the same call to a phone.
 
@@ -120,7 +124,9 @@ CARE_STORE=redis  npm run dev     # requires UPSTASH_REDIS_REST_URL + _TOKEN
 ```
 
 ### Seeding
-The four synthetic patients are written into the store on first access (`src/lib/care/seedPatients.ts`). The first time the store is used, a small, clearly-synthetic **demo history** is also seeded (two completed sessions — one escalated and reviewed, one open; grounded reports; a follow-up task; and messages) so a freshly deployed site is not empty. Seeding is idempotent (guarded by `care:seed:v1`), skipped in tests, and can be disabled with `CARE_SEED_DEMO=false`. To reset a file store, delete `.care-data/care-store.json`.
+Fourteen synthetic patients are written into the store on first access (`src/lib/care/seedPatients.ts`), each with conditions, medications, allergies, observation series, prior encounters and a care plan. Thirty-one detailed clinical documents (discharge summaries, clinic letters, monitoring logs and telephone notes) are seeded separately (`src/lib/care/seedDemo.ts`) and indexed for retrieval. The first time the store is used, a small, clearly-synthetic **demo history** is also seeded (completed sessions — one escalated and reviewed, one open; grounded reports; follow-up tasks; and messages) so a freshly deployed site is not empty.
+
+Patient seeding and record seeding are **versioned and idempotent**: an existing store receives newly added patients and documents without duplicating old ones, and a patient the nurse deleted is never resurrected. Seeding is skipped in tests and can be disabled with `CARE_SEED_DEMO=false`. To reset a file store, delete `.care-data/care-store.json`.
 
 ---
 
@@ -167,13 +173,15 @@ Copy `.env.example` to `.env.local`. The Web Voice Call — Demo entries:
 | `CARE_SIGNAL_POLL_MS` | optional | Signalling poll interval (default 1200). |
 | `CARE_ASR_MODEL` | optional | Transformers.js model id (default `Xenova/whisper-tiny.en`). |
 | `CARE_LLM_MODEL` | optional | WebLLM model id (default `Llama-3.2-1B-Instruct-q4f16_1-MLC`). |
+| `GEMINI_API_KEY` | optional | Server-side Gemini key for phrasing answers over retrieved evidence. Without it the local evidence engine answers. |
+| `GEMINI_MODEL` / `GEMINI_FAST_MODEL` / `GEMINI_DEEP_MODEL` | optional | Override the primary, low-latency or deep model. The client falls back across a stable model list. |
 | `CARE_STORE` | optional | Force `redis` \| `file` \| `memory`. |
 
 ---
 
 ## 8. Dependencies
 
-No new runtime packages were required for the core flow — it uses the browser's built-in WebRTC, `AudioWorklet`, `speechSynthesis` and `SpeechRecognition`, plus the already-present `qrcode` (server-side QR) and `@upstash/redis` (persistence).
+The retrieval layer uses **`minisearch`** (local, offline full-text ranking) so answers are deterministic and work without an embedding service. Everything else uses the browser's built-in WebRTC, `AudioWorklet`, `speechSynthesis` and `SpeechRecognition`, plus the already-present `qrcode` (server-side QR) and `@upstash/redis` (persistence). Gemini is an optional server-side enhancement.
 
 The on-device models are fetched **at runtime from a CDN only when a user clicks Load**, and are never bundled:
 
@@ -188,9 +196,9 @@ The existing Content-Security-Policy already allows `cdn.jsdelivr.net` (scripts)
 
 **Tested in this repository**
 - `npx tsc --noEmit` — clean.
-- `npx vitest run` — 87 passing (29 for the care domain, including the nurse assistant and patient messages).
-- `npx next build` — succeeds; all 20 care API routes and both pages are emitted.
-- A scripted API smoke test (32 checks: auth, patients, session + QR, join + duplicate rejection, signalling round-trip, transcript + server-side red-flag escalation, fallback agent, end, report + approve, QR regeneration invalidation, patient token isolation, the nurse assistant — medication answers, cross-patient answers, dictation and the unresolved-name path — patient messages both directions, and the audit trail) passes **32/32** against a production build.
+- `npx vitest run` — 148 passing across 12 files, including question routing, retrieval grounding, general-guidance labelling, emergency triage, the Twilio menu, and the care domain.
+- `npx next build` — succeeds; all care API routes and both pages are emitted.
+- `backend/.venv/Scripts/python.exe -m pytest -q` — 49 passing for the Python VoiceLink service.
 
 **NOT tested here — treat as unverified until you run it on two real devices**
 - Native two-device WebRTC audio (no browser/audio devices in this environment).

@@ -334,10 +334,103 @@ SYNTHETIC_PATIENTS = [
         "language": "en",
         "notes": (
             "Synthetic demo patient. Not a real person. Used to demonstrate a "
-            "local AI care line without exposing personal health information."
+            "local AI care line without exposing personal health information. "
+            "Conditions: essential hypertension since 2014; type 2 diabetes since 2018. "
+            "Medications: amlodipine 5 mg once daily; metformin 500 mg twice daily; "
+            "atorvastatin 20 mg at night. Allergy: penicillin, rash only. "
+            "Care plan: home blood pressure twice daily, morning weights, and a falls "
+            "review after two near-falls. Latest home readings 148/88 and 142/86 mmHg. "
+            "Escalate a reading at or above 160/100, chest pain, breathlessness or fainting."
         ),
         "synthetic": 1,
-    }
+    },
+    {
+        "extension": "CS-1002",
+        "display_name": "Ravi Kumar",
+        "age": 54,
+        "room": "8A",
+        "primary_concern": "Post-discharge blood pressure review",
+        "language": "en",
+        "notes": (
+            "Synthetic demo patient. Conditions: hypertension and hyperlipidaemia. "
+            "Medications: amlodipine 10 mg once daily, hydrochlorothiazide 12.5 mg once daily, "
+            "rosuvastatin 10 mg at night. Allergy: sulfa drugs, itching. "
+            "Care plan: log home blood pressure every morning, reduce salt, and review "
+            "medication tolerance. Latest readings 142/88 and 136/84 mmHg. "
+            "Escalate a reading above 180/110, severe headache, visual change or chest pain."
+        ),
+        "synthetic": 1,
+    },
+    {
+        "extension": "CS-1003",
+        "display_name": "Meera Nair",
+        "age": 81,
+        "room": "14",
+        "primary_concern": "COPD exacerbation recovery and oxygen weaning",
+        "language": "en",
+        "notes": (
+            "Synthetic demo patient. Conditions: COPD GOLD III, hypertension and anxiety. "
+            "Medications: tiotropium 18 micrograms once daily, salbutamol as needed, "
+            "prednisolone 30 mg with a five-day taper, amlodipine 5 mg daily. "
+            "Care plan: check oxygen saturation on room air twice daily, complete the steroid "
+            "taper, review inhaler technique and refer to pulmonary rehabilitation. "
+            "Latest saturation 91% on 1 litre of oxygen and 94% after walking on 2 litres. "
+            "Escalate saturation below 88%, confusion, fever or breathlessness at rest."
+        ),
+        "synthetic": 1,
+    },
+    {
+        "extension": "CS-1004",
+        "display_name": "David Fernandes",
+        "age": 39,
+        "room": "6",
+        "primary_concern": "Wound review after appendectomy",
+        "language": "en",
+        "notes": (
+            "Synthetic demo patient. Conditions: resolved acute appendicitis after a "
+            "laparoscopic appendectomy; obesity. Medications: paracetamol 1 g up to four "
+            "times daily as needed and amoxicillin-clavulanate 625 mg three times daily. "
+            "No known allergies. Care plan: check the wound daily, temperature twice daily, "
+            "avoid lifting over 5 kg for two weeks. Latest temperature 37.2 degrees and pain "
+            "2 out of 10 at rest. Escalate spreading redness, pus, fever or worsening pain."
+        ),
+        "synthetic": 1,
+    },
+    {
+        "extension": "CS-1005",
+        "display_name": "Lakshmi Iyer",
+        "age": 72,
+        "room": "11",
+        "primary_concern": "Diabetes follow-up and dizziness review",
+        "language": "en",
+        "notes": (
+            "Synthetic demo patient. Conditions: type 2 diabetes, osteoporosis and dizziness "
+            "under investigation. Medications: gliclazide 80 mg daily, metformin 1 g twice "
+            "daily and calcium with vitamin D daily. No known allergies. "
+            "Care plan: monitor for low blood sugar, check blood pressure lying and standing, "
+            "and review falls risk after a near-fall in the bathroom. Latest fasting glucose "
+            "12.1 mmol/L. Escalate confusion, sweating, fainting or a fall with injury."
+        ),
+        "synthetic": 1,
+    },
+    {
+        "extension": "CS-1006",
+        "display_name": "Noah Williams",
+        "age": 8,
+        "room": "4",
+        "primary_concern": "Newly diagnosed type 1 diabetes after ketoacidosis",
+        "language": "en",
+        "notes": (
+            "Synthetic paediatric demo patient. The caller is usually a parent or carer. "
+            "Conditions: type 1 diabetes; resolved diabetic ketoacidosis. "
+            "Medications: insulin glargine 8 units at bedtime, insulin lispro 4 units with "
+            "meals, and glucagon 0.5 mg for severe low blood sugar. No known allergies. "
+            "Care plan: parent gives insulin, checks glucose and ketones four-hourly while "
+            "unwell, follows the school care plan. Latest glucose 14.2 mmol/L with ketones "
+            "0.8 mmol/L. Escalate ketones above 1.5, vomiting, drowsiness or fast breathing."
+        ),
+        "synthetic": 1,
+    },
 ]
 
 

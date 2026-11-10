@@ -1,5 +1,5 @@
 /**
- * Minimal Gemini client for the nurse portal.
+ * Minimal Gemini client for the care assistant.
  *
  * Server-only. Used only to answer questions the deterministic, record-grounded
  * engine cannot, and to phrase a spoken alert in natural language. It is
@@ -7,15 +7,21 @@
  * callers fall back to `portalBrain`'s deterministic answers. Nothing here
  * fabricates clinical values — the prompts forbid it and the fallback is local.
  *
+ * Model choice is explicit:
+ *   - voice turns prefer a low-latency Flash-Lite model,
+ *   - deep record questions prefer a full Flash model,
+ *   - every list ends in a stable "latest" alias so a retirement does not take
+ *     the assistant offline.
+ *
  * Env: GEMINI_API_KEY (or GOOGLE_GENERATIVE_AI_API_KEY / GOOGLE_API_KEY)
  *      GEMINI_MODEL     optional primary model override
+ *      GEMINI_FAST_MODEL / GEMINI_DEEP_MODEL  optional per-mode overrides
  */
 
-const DEFAULT_MODELS = [
-  "gemini-flash-lite-latest",
-];
+const FAST_MODELS = ["gemini-flash-lite-latest", "gemini-2.5-flash-lite", "gemini-2.0-flash-lite"];
+const DEEP_MODELS = ["gemini-2.5-flash", "gemini-flash-latest", "gemini-2.0-flash", ...FAST_MODELS];
 
-const DEFAULT_TIMEOUT_MS = 12_000;
+const DEFAULT_TIMEOUT_MS = 14_000;
 
 export interface GeminiResult {
   text: string;
@@ -28,6 +34,10 @@ export interface GeminiOptions {
   maxTokens?: number;
   temperature?: number;
   timeoutMs?: number;
+  /** `fast` is the default for spoken turns; `deep` for a full record answer. */
+  prefer?: "fast" | "deep";
+  /** Ask the model not to emit markdown or stage directions (spoken turns). */
+  spoken?: boolean;
 }
 
 export function geminiApiKey(): string | null {
@@ -44,16 +54,20 @@ export function geminiConfigured(): boolean {
 }
 
 /** Best-effort label for the UI badge; says "not configured" honestly. */
-export function geminiModelLabel(): string {
+export function geminiModelLabel(prefer: "fast" | "deep" = "fast"): string {
   if (!geminiConfigured()) return "not configured";
   const primary = process.env.GEMINI_MODEL?.trim();
-  return primary || DEFAULT_MODELS[0];
+  if (primary) return primary;
+  const mode = prefer === "deep" ? process.env.GEMINI_DEEP_MODEL?.trim() : process.env.GEMINI_FAST_MODEL?.trim();
+  return mode || (prefer === "deep" ? DEEP_MODELS[0] : FAST_MODELS[0]);
 }
 
-function modelsToTry(): string[] {
+function modelsToTry(prefer: "fast" | "deep"): string[] {
   const override = process.env.GEMINI_MODEL?.trim();
-  const list = override ? [override, ...DEFAULT_MODELS] : DEFAULT_MODELS;
-  return [...new Set(list)];
+  const modeOverride =
+    prefer === "deep" ? process.env.GEMINI_DEEP_MODEL?.trim() : process.env.GEMINI_FAST_MODEL?.trim();
+  const base = prefer === "deep" ? DEEP_MODELS : FAST_MODELS;
+  return [...new Set([override, modeOverride, ...base].filter((m): m is string => Boolean(m)))];
 }
 
 interface RawCandidate {
@@ -61,6 +75,7 @@ interface RawCandidate {
     content?: { parts?: Array<{ text?: string }> };
     finishReason?: string;
   }>;
+  promptFeedback?: { blockReason?: string };
   error?: { code?: number; message?: string; status?: string };
 }
 
@@ -70,6 +85,17 @@ function extractText(json: RawCandidate): string {
     .map((p) => p.text ?? "")
     .join("")
     .trim();
+}
+
+const SAFETY_SETTINGS = [
+  { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_ONLY_HIGH" },
+  { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_ONLY_HIGH" },
+  { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_ONLY_HIGH" },
+  { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_ONLY_HIGH" },
+];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function callModel(
@@ -82,12 +108,17 @@ async function callModel(
   const timeout = setTimeout(() => controller.abort(), opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
   try {
+    const system = opts.spoken
+      ? `${opts.system}\n\nSPOKEN OUTPUT: return plain speech only. No markdown, bullet points, headings, citations, stage directions or emoji.`
+      : opts.system;
     const body: Record<string, unknown> = {
-      systemInstruction: { parts: [{ text: opts.system }] },
+      systemInstruction: { parts: [{ text: system }] },
       contents: [{ role: "user", parts: [{ text: opts.prompt }] }],
+      safetySettings: SAFETY_SETTINGS,
       generationConfig: {
         temperature: opts.temperature ?? 0.2,
-        maxOutputTokens: opts.maxTokens ?? 400,
+        maxOutputTokens: opts.maxTokens ?? 420,
+        topP: 0.9,
         ...(includeThinking ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
       },
     };
@@ -108,7 +139,14 @@ async function callModel(
       return { ok: false, status: res.status, message: json.error?.message ?? res.statusText };
     }
     const text = extractText(json);
-    if (!text) return { ok: false, status: 204, message: "empty response" };
+    if (!text) {
+      const blocked = json.promptFeedback?.blockReason;
+      return {
+        ok: false,
+        status: 204,
+        message: blocked ? `blocked: ${blocked}` : "empty response",
+      };
+    }
     return { ok: true, result: { text, model } };
   } catch (err) {
     return { ok: false, status: 0, message: err instanceof Error ? err.message : "request failed" };
@@ -125,18 +163,26 @@ export async function geminiGenerate(opts: GeminiOptions): Promise<GeminiResult 
   const key = geminiApiKey();
   if (!key) return null;
 
-  for (const model of modelsToTry()) {
+  for (const model of modelsToTry(opts.prefer ?? "fast")) {
     const first = await callModel(model, key, opts, true);
     if (first.ok) return first.result;
 
-    // Some models reject thinkingConfig; retry the same model without it.
+    // Some models reject thinkingConfig or a safety setting; retry the same
+    // model without the optional thinking block before moving on.
     if (first.status === 400) {
       const retry = await callModel(model, key, opts, false);
       if (retry.ok) return retry.result;
     }
 
-    // 503/429/404 are model-specific — try the next one. Auth errors (401/403)
-    // will not improve, so stop early.
+    // A short retry on rate limiting or a transient model outage. This is a
+    // portal request, not a batch job, so one 400ms pause is the upper bound.
+    if (first.status === 429 || first.status === 503) {
+      await sleep(400);
+      const retry = await callModel(model, key, opts, false);
+      if (retry.ok) return retry.result;
+    }
+
+    // Auth errors will not improve by trying another model.
     if (first.status === 401 || first.status === 403) return null;
   }
 
