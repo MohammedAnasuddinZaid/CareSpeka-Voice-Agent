@@ -50,11 +50,28 @@ export function recordAudit(
   return event;
 }
 
+/** A stored value can be hand-edited, truncated or written by an older build. */
+function isAuditEvent(value: unknown): value is AuditEvent {
+  if (!value || typeof value !== "object") return false;
+  const e = value as Record<string, unknown>;
+  return (
+    typeof e.id === "string" &&
+    typeof e.kind === "string" &&
+    typeof e.detail === "string" &&
+    typeof e.at === "number" &&
+    Number.isFinite(e.at)
+  );
+}
+
 export function loadAuditLog(): AuditEvent[] {
   if (typeof window === "undefined") return [];
   try {
     const stored = localStorage.getItem(AUDIT_KEY);
-    return stored ? (JSON.parse(stored) as AuditEvent[]) : [];
+    if (!stored) return [];
+    const parsed: unknown = JSON.parse(stored);
+    // Never hand a non-array (or half-written array) to the report/log pages:
+    // they call `.map`/`.filter` and would crash on malformed storage.
+    return Array.isArray(parsed) ? parsed.filter(isAuditEvent) : [];
   } catch {
     return [];
   }

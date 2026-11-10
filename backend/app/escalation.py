@@ -54,7 +54,11 @@ _URGENT_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ),
     (
         "cannot_walk",
-        re.compile(r"\b(can'?t (walk|move|get up)|unable to (walk|move|stand))\b", re.IGNORECASE),
+        re.compile(
+            r"\b(can'?t|cannot|can not)\s+(walk|move|get up)"
+            r"|\b(unable to (walk|move|stand))\b",
+            re.IGNORECASE,
+        ),
     ),
     (
         "very_dizzy",

@@ -22,7 +22,7 @@ import hashlib
 import hmac
 import json
 from typing import Any, Optional
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 
@@ -175,9 +175,18 @@ class ExotelProvider(TelephonyProvider):
             data.append(("CustomField", custom))
 
         url = f"{self.base_url}/v1/Accounts/{self.account_sid}/Calls/connect"
+        # ``data`` must be a mapping or httpx treats a list of pairs as raw
+        # content (which produces a synchronous stream and breaks AsyncClient).
+        # Encode the repeated StatusCallbackEvents[] fields explicitly instead.
+        payload_body = urlencode(data).encode("utf-8")
         try:
             async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-                response = await client.post(url, data=data, auth=self._auth())
+                response = await client.post(
+                    url,
+                    content=payload_body,
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    auth=self._auth(),
+                )
         except httpx.HTTPError as exc:
             return CallResult(ok=False, detail=f"Exotel request failed: {exc}", mode="error")
         if response.status_code >= 400:

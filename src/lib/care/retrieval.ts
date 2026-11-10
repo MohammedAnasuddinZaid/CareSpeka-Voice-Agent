@@ -115,31 +115,79 @@ const SYNONYMS: Record<string, string[]> = {
   glucose: ["sugar", "diabetes"],
   breath: ["breathless", "breathlessness", "dyspnoea", "dyspnea", "respiratory"],
   breathless: ["breathlessness", "dyspnoea", "dyspnea", "oxygen"],
+  breathlessness: ["dyspnoea", "dyspnea", "oxygen", "respiratory"],
+  dyspnoea: ["breathless", "breathlessness", "respiratory"],
+  dyspnea: ["breathless", "breathlessness", "respiratory"],
   water: ["fluid", "diuretic", "furosemide", "swelling", "oedema", "edema"],
   swelling: ["oedema", "edema", "fluid", "ankle"],
+  swollen: ["swelling", "oedema", "edema", "fluid"],
   dizzy: ["dizziness", "vertigo", "orthostatic", "falls"],
   fall: ["falls", "dizzy", "mobility"],
   pee: ["urine", "urinary", "output"],
   tummy: ["abdomen", "abdominal", "stomach"],
   poop: ["bowel", "stool", "constipation"],
   kidney: ["renal", "creatinine", "egfr"],
+  renal: ["kidney", "creatinine", "egfr"],
+  creatinine: ["kidney", "renal", "egfr"],
+  egfr: ["kidney", "renal", "creatinine"],
   liver: ["hepatic", "bilirubin", "alt"],
   bloods: ["blood", "test", "lab", "results", "haemoglobin", "sodium", "potassium"],
   labs: ["blood", "test", "results", "laboratory"],
-  scan: ["imaging", "xray", "x-ray", "ct", "mri", "ultrasound"],
+  haemoglobin: ["hemoglobin", "hb", "anaemia", "anemia"],
+  hemoglobin: ["haemoglobin", "hb", "anaemia", "anemia"],
+  hba1c: ["a1c", "glycated", "diabetes", "glucose"],
+  cholesterol: ["lipid", "ldl", "hdl"],
+  scan: ["imaging", "xray", "ct", "mri", "ultrasound"],
+  xray: ["scan", "imaging", "x-ray"],
   wound: ["incision", "surgical", "dressing", "infection"],
   operation: ["surgery", "surgical", "procedure", "operative"],
   thin: ["anticoagulant", "warfarin", "apixaban", "rivaroxaban"],
   gasping: ["breathless", "respiratory", "oxygen"],
   unconscious: ["collapsed", "unresponsive", "alertness"],
   confused: ["confusion", "delirium", "alertness"],
-  pain: ["pain", "discomfort", "score"],
-  mood: ["anxiety", "depression", "mood", "mental"],
-  sleep: ["sleep", "insomnia", "night", "orthopnoea"],
-  appetite: ["appetite", "eating", "weight", "nutrition"],
+  pain: ["discomfort", "ache", "sore", "score"],
+  mood: ["anxiety", "depression", "mental"],
+  sleep: ["insomnia", "night", "orthopnoea"],
+  appetite: ["eating", "weight", "nutrition"],
   walk: ["mobility", "walking", "exercise", "falls"],
   fluid: ["water", "oedema", "edema", "intake", "output", "diuretic"],
+  sepsis: ["infection", "fever", "septic"],
+  uti: ["urine", "urinary", "infection"],
+  af: ["atrial", "fibrillation"],
+  hf: ["heart", "failure"],
+  cva: ["stroke", "neurological"],
+  mi: ["heart", "attack", "myocardial"],
+  dvt: ["clot", "thrombosis"],
+  pe: ["pulmonary", "embolism"],
+  copd: ["respiratory", "lungs", "smoking"],
 };
+
+/**
+ * Compact clinical spellings that a naive letter/digit split tears apart:
+ * "SpO2" becomes "spo 2", "O2" becomes "o" + a dropped "2", "BP" stays an
+ * opaque abbreviation. Expanding them at tokenize time applies to both the
+ * indexed chart and the question, so "spo2" and "oxygen saturation" meet.
+ */
+const COMPACT_TERMS: Array<[RegExp, string]> = [
+  [/\bspo2\b|\bsao2\b/g, " oxygen saturation "],
+  [/\bpao2\b|\bo2\b|\byo2\b/g, " oxygen "],
+  [/\bco2\b/g, " carbon dioxide "],
+  [/\bbp\b/g, " bp blood pressure "],
+  [/\bhr\b/g, " hr heart rate "],
+  [/\brr\b/g, " rr respiratory rate "],
+  [/\btemp\b/g, " temp temperature "],
+  [/\bwt\b/g, " wt weight "],
+  [/\bhba1c\b/g, " hba1c glycated haemoglobin "],
+  [/\begfr\b/g, " egfr renal kidney "],
+  [/\bu&e\b|\bu and e\b/g, " urea electrolytes "],
+  [/\bfbc\b|\bwcc\b|\bwbc\b/g, " full blood count haemoglobin white cell "],
+  [/\blfts?\b/g, " liver function test "],
+  [/\bcrp\b/g, " crp inflammation "],
+  [/\besr\b/g, " esr inflammation "],
+  [/\binr\b/g, " inr clotting warfarin "],
+  [/\bx-?ray\b/g, " xray imaging "],
+  [/\bsoboe\b|\bdoe\b/g, " breathless exertion "],
+];
 
 /** Light, deliberately conservative stemming. */
 function stem(term: string): string {
@@ -153,8 +201,9 @@ function stem(term: string): string {
 }
 
 function tokenize(text: string): string[] {
-  return text
-    .toLowerCase()
+  let lower = text.toLowerCase();
+  for (const [pattern, replacement] of COMPACT_TERMS) lower = lower.replace(pattern, replacement);
+  return lower
     .replace(/([a-z])(\d)/g, "$1 $2")
     .replace(/(\d)([a-z])/g, "$1 $2")
     .replace(/[^\p{L}\p{N}]+/gu, " ")
@@ -162,19 +211,54 @@ function tokenize(text: string): string[] {
     .filter((t) => t.length > 1 && !STOPWORDS.has(t));
 }
 
+/**
+ * A very long question (a dictated paragraph, a pasted note) would otherwise
+ * expand into dozens of OR terms, each with fuzzy and prefix matching. The cap
+ * keeps a turn bounded without dropping the meaningful words: base terms come
+ * first, then synonyms, and each group is ordered longest-first.
+ */
+const MAX_QUERY_TERMS = 16;
+
 function expandTerms(question: string): string[] {
   const base = tokenize(question);
-  const out = new Set<string>(base);
-  for (const term of base) {
+  const out = new Set<string>();
+  const byLength = (a: string, b: string) => b.length - a.length || a.localeCompare(b);
+  for (const term of [...base].sort(byLength)) out.add(term);
+  for (const term of [...base].sort(byLength)) {
     for (const extra of SYNONYMS[term] ?? []) out.add(extra);
     const singular = stem(term);
     if (singular !== term) out.add(singular);
   }
-  return [...out].filter((t) => t.length > 1);
+  return [...out].filter((t) => t.length > 1).slice(0, MAX_QUERY_TERMS);
 }
 
 export function passageSearchText(passage: Passage): string {
   return `${passage.title} ${passage.source ?? ""} ${passage.keywords ?? ""} ${passage.text}`;
+}
+
+interface WordSets {
+  raw: Set<string>;
+  stemmed: Set<string>;
+}
+
+/**
+ * Whole-word sets for a passage/title. Matching whole words (rather than
+ * `String.includes`) matters: "rate" is not a match inside "accurate", and a
+ * stray substring must not make a passage look like evidence.
+ */
+function wordSets(text: string): WordSets {
+  const raw = new Set<string>();
+  const stemmed = new Set<string>();
+  for (const word of text.toLowerCase().split(/[^\p{L}\p{N}]+/u)) {
+    if (!word) continue;
+    raw.add(word);
+    stemmed.add(stem(word));
+  }
+  return { raw, stemmed };
+}
+
+function hasTerm(words: WordSets, term: string): boolean {
+  return words.raw.has(term) || words.stemmed.has(stem(term));
 }
 
 function excerptFor(text: string, terms: string[], max = 320): string {
@@ -471,24 +555,25 @@ export function buildPatientPassages(
   return out;
 }
 
-interface IndexedPassage extends Passage {
-  searchTerms: string;
-}
-
-function indexPassages(passages: Passage[]): MiniSearch<IndexedPassage> {
-  const mini = new MiniSearch<IndexedPassage>({
+function indexPassages(passages: Passage[]): MiniSearch<Passage> {
+  const mini = new MiniSearch<Passage>({
     fields: ["title", "text", "keywords"],
     storeFields: ["id"],
     tokenize,
     processTerm: stem,
     searchOptions: {
       boost: { title: 2.4, keywords: 1.35, text: 1 },
-      fuzzy: 0.2,
-      prefix: true,
+      // Fuzzy matching is valuable for speech-to-text slips ("furosemid") but
+      // ruinous on short terms, where one edit reaches unrelated words. Prefix
+      // matching is likewise only useful once a term is long enough to narrow.
+      fuzzy: (term) => (term.length >= 5 ? 0.2 : false),
+      prefix: (term) => term.length >= 3,
+      maxFuzzy: 2,
+      weights: { fuzzy: 0.7, prefix: 0.85 },
       combineWith: "OR",
     },
   });
-  mini.addAll(passages.map((p) => ({ ...p, searchTerms: passageSearchText(p) })));
+  mini.addAll(passages);
   return mini;
 }
 
@@ -503,8 +588,8 @@ function indexPassages(passages: Passage[]): MiniSearch<IndexedPassage> {
 // microseconds. The cache is small (LRU-ish, insert-order eviction) so a busy
 // process cannot grow without bound.
 
-const INDEX_CACHE = new Map<string, MiniSearch<IndexedPassage>>();
-const INDEX_CACHE_MAX = 40;
+const INDEX_CACHE = new Map<string, MiniSearch<Passage>>();
+export const RETRIEVAL_CACHE_MAX = 40;
 
 function fnv1a(input: string): number {
   let h = 0x811c9dc5;
@@ -519,12 +604,18 @@ function fnv1a(input: string): number {
 export function passagesSignature(passages: Passage[]): string {
   let acc = `${passages.length}`;
   for (const p of passages) {
-    acc += `|${fnv1a(`${p.id}\u0001${p.title}\u0001${p.text}\u0001${p.at ?? ""}\u0001${p.source ?? ""}`).toString(36)}`;
+    // Every field the index/search depends on must be in the signature, or a
+    // chart that changed only its keywords/kind/weight would reuse a stale
+    // index (e.g. two patients whose profile text matches but whose extension
+    // keyword differs).
+    acc += `|${fnv1a(
+      `${p.id}\u0001${p.kind}\u0001${p.title}\u0001${p.text}\u0001${p.at ?? ""}\u0001${p.source ?? ""}\u0001${p.keywords ?? ""}\u0001${p.weight ?? ""}`
+    ).toString(36)}`;
   }
   return `${passages.length}:${fnv1a(acc).toString(36)}`;
 }
 
-function getIndex(passages: Passage[]): MiniSearch<IndexedPassage> {
+function getIndex(passages: Passage[]): MiniSearch<Passage> {
   const key = passagesSignature(passages);
   const cached = INDEX_CACHE.get(key);
   if (cached) {
@@ -535,7 +626,7 @@ function getIndex(passages: Passage[]): MiniSearch<IndexedPassage> {
   }
   const built = indexPassages(passages);
   INDEX_CACHE.set(key, built);
-  if (INDEX_CACHE.size > INDEX_CACHE_MAX) {
+  if (INDEX_CACHE.size > RETRIEVAL_CACHE_MAX) {
     const oldest = INDEX_CACHE.keys().next().value;
     if (oldest !== undefined) INDEX_CACHE.delete(oldest);
   }
@@ -545,6 +636,11 @@ function getIndex(passages: Passage[]): MiniSearch<IndexedPassage> {
 /** Test hook: drop every cached index. */
 export function clearRetrievalCache(): void {
   INDEX_CACHE.clear();
+}
+
+/** Test hook: number of cached indexes (always bounded by the cache ceiling). */
+export function retrievalCacheSize(): number {
+  return INDEX_CACHE.size;
 }
 
 /**
@@ -565,9 +661,9 @@ export function retrievePassages(
 
   const mini = getIndex(passages);
   const query = terms.join(" ");
-  let raw: Array<{ id: string; score: number }> = [];
+  let raw: Array<{ id: string; score: number; terms?: string[]; queryTerms?: string[] }> = [];
   try {
-    raw = mini.search(query) as Array<{ id: string; score: number }>;
+    raw = mini.search(query) as typeof raw;
   } catch {
     raw = [];
   }
@@ -583,11 +679,17 @@ export function retrievePassages(
     const passage = byId.get(String(hit.id));
     if (!passage) continue;
     if (best > 0 && hit.score < best * relativeFloor) continue;
-    const hay = passageSearchText(passage).toLowerCase();
-    const matchedTerms = terms.filter((t) => hay.includes(t));
+    const hay = wordSets(passageSearchText(passage));
+    // MiniSearch reports which query terms actually matched, including fuzzy
+    // and prefix matches. Without them a typo like "potasium" was found by the
+    // index and then thrown away by the literal word check below.
+    const fuzzyMatched = new Set((hit.queryTerms ?? []).map(stem));
+    const matchedTerms = terms.filter((t) => fuzzyMatched.has(stem(t)) || hasTerm(hay, t));
     if (matchedTerms.length < minMatched) continue;
-    const title = passage.title.toLowerCase();
-    const titleFocus = focusTerms.some((t) => title.includes(t));
+    const titleWords = wordSets(passage.title);
+    const titleFocus =
+      (hit.terms ?? []).some((t) => t.length >= 4 && hasTerm(titleWords, t)) ||
+      focusTerms.some((t) => hasTerm(titleWords, t));
     const weight = passage.weight ?? 1;
     // A small recency boost for documents; old letters still rank if relevant.
     const at = passage.at ? Date.parse(passage.at) : NaN;

@@ -31,7 +31,13 @@ export function startAlarm(): void {
   if (!ctx) {
     const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!AC) return;
-    ctx = new AC();
+    try {
+      ctx = new AC();
+    } catch {
+      // A blocked or exhausted audio context must never break alarm handling.
+      ctx = null;
+      return;
+    }
   }
   void ctx.resume();
   if (osc) return; // already sounding

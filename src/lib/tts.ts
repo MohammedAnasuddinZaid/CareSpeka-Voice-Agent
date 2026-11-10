@@ -133,6 +133,8 @@ interface QueueItem {
 }
 const queue: QueueItem[] = [];
 let speaking = false;
+/** Bumped by stop() so an in-flight pump cannot speak after a cancel. */
+let epoch = 0;
 const MAX_QUEUE = 4;
 
 /**
@@ -177,9 +179,12 @@ async function pump(): Promise<void> {
   if (speaking || queue.length === 0 || typeof window === "undefined" || !window.speechSynthesis) return;
   speaking = true;
   const item = queue.shift()!;
+  const myEpoch = epoch;
 
   try {
     await ensureVoices();
+    // A stop() while we were waiting for voices must win — never speak late.
+    if (myEpoch !== epoch) return;
 
     let text = item.text;
     let lang = item.lang;
@@ -190,6 +195,7 @@ async function pump(): Promise<void> {
     const online = typeof navigator === "undefined" ? true : navigator.onLine !== false;
     if (!voice && !lang.toLowerCase().startsWith("en") && online) {
       const ok = await playRemoteTts(gttsUrl(item.text, item.lang));
+      if (myEpoch !== epoch) return;
       if (ok) return;
     }
 
@@ -200,6 +206,7 @@ async function pump(): Promise<void> {
       voice = findVoiceForLang("en-US");
     }
     voice = voice ?? findEnglishVoice();
+    if (myEpoch !== epoch) return;
 
     const u = new SpeechSynthesisUtterance(text);
     u.lang = lang;
@@ -315,6 +322,7 @@ export class VoiceAlert {
   }
 
   stop(): void {
+    epoch += 1;
     queue.length = 0;
     if (typeof window !== "undefined" && window.speechSynthesis) {
       try {

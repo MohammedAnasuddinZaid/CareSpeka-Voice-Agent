@@ -265,7 +265,7 @@ export async function deletePatient(id: string): Promise<boolean> {
   if (!patient) return false;
 
   // remove their records
-  const recordIds = stringArray(await d.getList(K.recordIndex));
+  const recordIds = await readRecordIndex();
   const keptRecordIds: string[] = [];
   for (const rid of recordIds) {
     const rec = await d.getDoc(K.record(rid));
@@ -671,13 +671,23 @@ export async function createTask(input: Omit<CareTask, "id" | "createdAt" | "sta
 export async function listTasks(patientId?: string): Promise<CareTask[]> {
   const d = await getDriver();
   const all = await d.getList(K.tasks);
-  // Keep only the most recent version of each task id.
-  const byId = new Map<string, CareTask>();
+  // Keep only the most recent version of each task id. Remember the position of
+  // each task's FIRST append so a status update (which re-appends the record
+  // with the same createdAt) does not jump it around the list. Ties on
+  // createdAt — two tasks created in the same millisecond — break by append
+  // order so the newer one is always first.
+  const byId = new Map<string, { task: CareTask; index: number }>();
+  let index = 0;
   for (const raw of all) {
     if (!isRecord(raw) || typeof raw.id !== "string" || typeof raw.createdAt !== "string") continue;
-    byId.set(raw.id, raw as unknown as CareTask);
+    const task = raw as unknown as CareTask;
+    const existing = byId.get(task.id);
+    if (existing) existing.task = task;
+    else byId.set(task.id, { task, index: index++ });
   }
-  const latest = [...byId.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const latest = [...byId.values()]
+    .sort((a, b) => b.task.createdAt.localeCompare(a.task.createdAt) || b.index - a.index)
+    .map((entry) => entry.task);
   return patientId ? latest.filter((t) => t.patientId === patientId) : latest;
 }
 
@@ -830,21 +840,37 @@ export async function addRecord(input: {
   return record;
 }
 
+/**
+ * Read the record index, healing the legacy shape where an older build stored
+ * it as a JSON document instead of a list.
+ *
+ * The old code only tried the document fallback inside a `catch`, but the
+ * memory and file drivers return `[]` (they do not throw) for a missing list
+ * key, so a doc-shaped index silently produced zero records. Check the
+ * document whenever the list is empty, regardless of driver.
+ */
+async function readRecordIndex(): Promise<string[]> {
+  const d = await getDriver();
+  let listed: unknown[] = [];
+  try {
+    listed = await d.getList(K.recordIndex);
+  } catch {
+    listed = [];
+  }
+  const fromList = listed.filter((x): x is string => typeof x === "string");
+  if (fromList.length) return fromList;
+
+  const raw = await d.getDoc(K.recordIndex);
+  if (!Array.isArray(raw)) return [];
+  const healed = raw.filter((x): x is string => typeof x === "string");
+  await d.setList(K.recordIndex, healed).catch(() => undefined);
+  return healed;
+}
+
 /** Newest first. Missing documents (deleted) are skipped. */
 export async function listRecords(patientId?: string): Promise<PatientRecord[]> {
+  const ids = await readRecordIndex();
   const d = await getDriver();
-  let ids: string[] = [];
-  try {
-    ids = (await d.getList(K.recordIndex)) as string[];
-  } catch {
-    // The index may have been stored as a JSON doc (e.g. by an older build
-    // of deletePatient). Heal it by converting to a proper list.
-    const raw = await d.getDoc(K.recordIndex);
-    if (Array.isArray(raw)) {
-      ids = raw as string[];
-      await d.setList(K.recordIndex, ids).catch(() => undefined);
-    }
-  }
   const out: PatientRecord[] = [];
   for (const id of ids) {
     const rec = (await d.getDoc(K.record(id))) as PatientRecord | null;

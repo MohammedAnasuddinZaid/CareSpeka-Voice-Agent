@@ -11,6 +11,7 @@ business rules that must not live in a route handler:
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import datetime
 from typing import Any, Optional
 from urllib.parse import quote
@@ -767,29 +768,93 @@ def _apply_call_state(call_id: str, state: str, *, provider_event_id: Optional[s
     )
 
 
-def _public_call(record: Optional[dict[str, Any]]) -> dict[str, Any]:
+_FULL_NUMBER_KEYS = {
+    "phone_e164",
+    "phone",
+    "mobile",
+    "number",
+    "from_number",
+    "to_number",
+    "caller",
+    "called",
+    "from",
+    "to",
+}
+
+
+def _is_full_number_key(key: Any) -> bool:
+    """True for payload keys whose value is (or may be) a full phone number.
+
+    The dashboard is allowed to show *masked* numbers only, so any key that
+    carries a complete number (``from_e164``, ``to_e164``, ``phone_e164``, the
+    provider's ``From``/``To`` fields, or a nested ``..._e164`` field added
+    later) must be stripped before serialisation.
+    """
+    lowered = str(key).strip().lower().replace("-", "_")
+    return lowered in _FULL_NUMBER_KEYS or lowered.endswith("_e164")
+
+
+_E164_IN_TEXT = re.compile(r"\+[1-9]\d{6,14}")
+
+
+def strip_full_numbers(value: Any) -> Any:
+    """Recursively remove full E.164 values from an outbound payload."""
+    if isinstance(value, dict):
+        return {
+            key: strip_full_numbers(item)
+            for key, item in value.items()
+            if not _is_full_number_key(key)
+        }
+    if isinstance(value, (list, tuple)):
+        return [strip_full_numbers(item) for item in value]
+    if isinstance(value, str):
+        # Free-text fields (provider payloads, action results) can embed a
+        # number; mask anything that looks like an international E.164 value.
+        return _E164_IN_TEXT.sub(lambda match: numbers.mask(match.group(0)), value)
+    return value
+
+
+_strip_full_numbers = strip_full_numbers
+
+
+def public_call(record: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """Serialise a call record for an API client — masked numbers only."""
     if record is None:
         return {}
     data = dict(record)
     data.pop("metadata_json", None)
+    for full, masked in (("from_e164", "from_masked"), ("to_e164", "to_masked")):
+        raw = data.pop(full, None)
+        data[masked] = data.get(masked) or numbers.mask(raw)
     if isinstance(data.get("metadata"), dict):
         meta = dict(data["metadata"])
         meta.pop("patient_name", None)
         data["metadata"] = meta
-    return data
+    return _strip_full_numbers(data)
 
 
-def _public_message(record: Optional[dict[str, Any]]) -> dict[str, Any]:
+def public_message(record: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """Serialise a message record for an API client — masked numbers only."""
     if record is None:
         return {}
     data = dict(record)
     data.pop("metadata_json", None)
-    return data
+    for full, masked in (("from_e164", "from_masked"), ("to_e164", "to_masked")):
+        raw = data.pop(full, None)
+        data[masked] = data.get(masked) or numbers.mask(raw)
+    return _strip_full_numbers(data)
 
 
-def _public_escalation(record: Optional[dict[str, Any]]) -> dict[str, Any]:
+def public_escalation(record: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """Serialise an escalation record for an API client."""
     if record is None:
         return {}
     data = dict(record)
     data.pop("metadata_json", None)
-    return data
+    return _strip_full_numbers(data)
+
+
+# Backwards-compatible private aliases used throughout this module.
+_public_call = public_call
+_public_message = public_message
+_public_escalation = public_escalation

@@ -57,16 +57,19 @@ export function getOrCreateSession(): SessionInfo {
 /** Pair this device to an existing session (QR scan / manual entry) */
 export function setSessionId(sessionId: string): SessionInfo {
   const clean = sessionId.trim().toUpperCase();
+  // Server (SSR / tests): there is no device or storage, so stay side-effect
+  // free and consistent with getOrCreateSession() instead of minting an id.
+  if (typeof window === "undefined") {
+    return { sessionId: clean, deviceId: "server", createdAt: Date.now() };
+  }
   const session: SessionInfo = {
     sessionId: clean,
     deviceId: generateDeviceId(),
     createdAt: Date.now(),
   };
-  if (typeof window !== "undefined") {
-    try {
-      localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-    } catch {}
-  }
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  } catch {}
   return session;
 }
 

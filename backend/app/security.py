@@ -209,7 +209,9 @@ def is_local_origin(origin: str | None) -> bool:
         return False
     return bool(
         re.fullmatch(
-            r"(localhost|127\.0\.0\.1|\[::1\]|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
+            # urlparse strips the brackets from an IPv6 literal, so the loopback
+            # address arrives as "::1" (never "[::1]").  Match the bare form.
+            r"(localhost|127\.0\.0\.1|::1|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
             r"192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})",
             parsed.hostname or "",
         )

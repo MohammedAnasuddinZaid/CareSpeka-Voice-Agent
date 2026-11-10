@@ -51,20 +51,100 @@ const PERCENT_MATH =
   /^(?:what is|what'?s|whats)?\s*\d+(?:\.\d+)?\s*(?:%|percent)\s+of\s+\d+(?:\.\d+)?\s*\??$/i;
 
 const EMERGENCY_SYMPTOM =
-  /\b(chest pain|crushing chest|heart attack|can'?t breathe|cannot breathe|not breathing|stopped breathing|gasping|collapsed|unconscious|unresponsive|stroke|face droop|slurred speech|severe bleeding|bleeding heavily|bleeding a lot|suicid(?:e|al)|overdose|seizure|choking|anaphylaxis|swollen tongue|throat closing)\b/i;
+  /\b(chest pain|crushing chest|heart attack|can'?t breathe|cannot breathe|not breathing|stopped breathing|gasping|collapsed|unconscious|unresponsive|stroke|face droop|slurred speech|severe bleeding|bleeding heavily|bleeding a lot|bleeding (?:now|badly)|won'?t stop bleeding|suicid(?:e|al)|overdose|seizure|choking|anaphylaxis|swollen tongue|throat closing)\b/i;
+
+/**
+ * A symptom the nurse has just ruled out ("no chest pain", "denies chest
+ * pain", "she hasn't collapsed") is not a live red flag. Only clear negation
+ * in the same clause counts: "not sure if she has chest pain" stays ambiguous
+ * and is still treated as a report.
+ */
+const NEGATED =
+  /\b(?:no|never|without|denies|denied|denying|negative for|free of|no longer)\b|\b(?:does|do|did|is|are|was|were|has|have|had)\s+not\b|\b(?:hasn'?t|haven'?t|hadn'?t|doesn'?t|don'?t|didn'?t|isn'?t|aren'?t|wasn'?t|weren'?t)\b/i;
+
+const RESOLVED =
+  /\b(?:has|have|had|is|are|was|were)?\s*(?:gone|resolved|settled|eased|subsided|improved|better now|no longer)\b/i;
+
+const CLAUSE_BREAK = /[.;!?]|\bbut\b|\bhowever\b|\balthough\b/i;
+
+/**
+ * Split out so safety wins over education when the nurse reports a symptom:
+ * "she has chest pain, help me understand" is still a live report. A pure
+ * question ("what causes chest pain") has no such subject and stays educational.
+ */
+const REPORTING_SYMPTOM =
+  /\b(?:she|he|they|the patient|patient)\s+(?:has|have|had|is|are|feels?|reports?|complains? of|describes?|says)\b/i;
+
+function symptomIsNegated(lower: string): boolean {
+  const match = EMERGENCY_SYMPTOM.exec(lower);
+  if (!match || match.index == null) return false;
+  const before = lower.slice(Math.max(0, match.index - 56), match.index);
+  const clause = before.split(CLAUSE_BREAK).pop() ?? before;
+  return NEGATED.test(clause);
+}
+
+function symptomIsResolved(lower: string): boolean {
+  const match = EMERGENCY_SYMPTOM.exec(lower);
+  if (!match || match.index == null) return false;
+  const after = lower.slice(match.index + match[0].length, match.index + match[0].length + 48);
+  const clause = after.split(CLAUSE_BREAK)[0] ?? after;
+  return RESOLVED.test(clause);
+}
 
 const EMERGENCY_NOW =
-  /\b(right now|now|currently|suddenly|just (?:started|had|happened)|started (?:having|to|with)|(?:is|are|was) having|collapsed|unresponsive|not breathing|stopped breathing|bleeding heavily|bleeding a lot|emergency|immediately|quick(?:ly)?|help)\b/i;
+  /\b(right now|now|currently|suddenly|just (?:started|had|happened)|started (?:having|to|with)|(?:is|are|was) having|collapsed|unresponsive|not breathing|stopped breathing|bleeding heavily|bleeding a lot|emergency|immediately|quick(?:ly)?)\b/i;
 
 const HISTORICAL =
-  /\b(when did|when was|history of|previous|past medical|last time|in the past|documented|recorded)\b/i;
+  /\b(when did|when was|history|previous|past medical|last time|in the past|documented|recorded)\b/i;
 
 const EDUCATION =
-  /\b(what (?:should|do|would)|how (?:do|should)|warning signs?|red flags?|protocol|guideline|teach|explain|signs? of|symptoms? of|first aid for|management of)\b/i;
+  /\b(what(?:'s| is| are)|(?:what|which) (?:should|do|would)|how (?:do|should)|define|definition|meaning of|tell me about|difference between|warning signs?|red flags?|protocol|guideline|teach|explain|understand|signs? of|symptoms? of|first aid for|management of|causes?|triggers?|risk factors? (?:for|of))\b/i;
 
 function escapeRe(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
+/**
+ * Words that appear in many unrelated condition names. Matching one of these
+ * alone ("heart" in "heart attack" vs the chart's "heart failure") would make
+ * an educational question look patient-specific.
+ */
+const GENERIC_CONDITION_WORDS = new Set([
+  "heart",
+  "failure",
+  "kidney",
+  "liver",
+  "lung",
+  "blood",
+  "pressure",
+  "disease",
+  "disorder",
+  "syndrome",
+  "chronic",
+  "acute",
+  "cardiac",
+  "renal",
+  "hepatic",
+  "respiratory",
+  "infection",
+  "cancer",
+  "pain",
+  "anxiety",
+  "depression",
+  "essential",
+  "primary",
+  "secondary",
+  "left",
+  "right",
+  "lower",
+  "upper",
+  "small",
+  "large",
+  "cell",
+  "mellitus",
+  "stage",
+  "recovery",
+]);
 
 function nameForms(patient?: ClinicalPatient | null): string[] {
   if (!patient) return [];
@@ -87,9 +167,22 @@ function mentionsPatientCondition(question: string, patient?: ClinicalPatient | 
       .toLowerCase()
       .replace(/\([^)]*\)/g, " ")
       .replace(/\b(chronic|acute|essential|type|mild|moderate|severe|persistent|recovery)\b/g, " ")
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
       .trim();
-    const words = core.split(/\s+/).filter((w) => w.length >= 4);
-    return words.length > 0 && words.some((w) => new RegExp(`\\b${escapeRe(w)}`, "i").test(q));
+    // The whole condition name is the strongest signal ("heart failure").
+    if (core.length >= 4) {
+      const phrase = new RegExp(`(^|[^a-z0-9])${escapeRe(core)}(?=$|[^a-z0-9])`, "i");
+      if (phrase.test(q)) return true;
+    }
+    // Otherwise only a distinctive word counts. Generic clinical words are
+    // skipped so "what are the warning signs of a heart attack?" is not
+    // mistaken for a question about this patient's heart failure.
+    const words = core
+      .split(/\s+/)
+      .filter((w) => w.length >= 5 && !GENERIC_CONDITION_WORDS.has(w));
+    return words.some((w) =>
+      new RegExp(`(^|[^a-z0-9])${escapeRe(w)}(?:s|es)?(?=$|[^a-z0-9])`, "i").test(q)
+    );
   });
 }
 
@@ -108,7 +201,17 @@ export function classifyQuestion(question: string, patient?: ClinicalPatient | n
     const educational = EDUCATION.test(lower);
     const happeningNow = EMERGENCY_NOW.test(lower);
     const historical = HISTORICAL.test(lower);
-    if (happeningNow || (!educational && !historical)) {
+    const negated = symptomIsNegated(lower);
+    const resolved = symptomIsResolved(lower);
+    const reported = REPORTING_SYMPTOM.test(lower);
+    // A ruled-out or already-resolved symptom is a record statement, not a new
+    // emergency. An explicit "now"/"collapsed" still wins over education or
+    // history, and a reported symptom wins over a "help me understand" tail.
+    if (
+      !negated &&
+      !resolved &&
+      (happeningNow || (!historical && (reported || !educational)))
+    ) {
       return {
         scope: "emergency",
         reason: "red-flag symptom described as happening now",

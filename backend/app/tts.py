@@ -47,7 +47,7 @@ def normalize_for_speech(text: str) -> str:
         (r"\bmeds\b", "medicines"),
         (r"\bmin\.", "minutes"),
         (r"\bhr\.", "hour"),
-        (r"\b&", " and "),
+        (r"&", " and "),
         (r"\+", " plus "),
         (r"@", " at "),
         (r"[/\\]", " or "),

@@ -18,11 +18,27 @@ function getChannel(): BroadcastChannel | null {
   return broadcastChannel;
 }
 
+/** A stored value can be hand-edited, truncated or written by an older build. */
+function isGestureLogEntry(value: unknown): value is GestureLogEntry {
+  if (!value || typeof value !== "object") return false;
+  const e = value as Record<string, unknown>;
+  return (
+    typeof e.id === "string" &&
+    typeof e.gesture === "string" &&
+    typeof e.timestamp === "number" &&
+    Number.isFinite(e.timestamp)
+  );
+}
+
 export function loadGestureLog(): GestureLogEntry[] {
   if (typeof window === "undefined") return [];
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    return stored ? (JSON.parse(stored) as GestureLogEntry[]) : [];
+    if (!stored) return [];
+    const parsed: unknown = JSON.parse(stored);
+    // The logs page renders this list directly; a non-array or a null entry
+    // would crash the whole view instead of just losing one corrupt row.
+    return Array.isArray(parsed) ? parsed.filter(isGestureLogEntry) : [];
   } catch {
     return [];
   }

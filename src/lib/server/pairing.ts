@@ -91,6 +91,12 @@ export function verifyPairToken(session: string, token: string): boolean {
   return !!rec && !!token && rec.token === token;
 }
 
+/** Test hook: drop the in-process pairing registry (the module-level map is
+ *  captured at load, so deleting globalThis.__carespeakPairing is not enough). */
+export function resetPairingForTests(): void {
+  registry.clear();
+}
+
 /** Whether this session has ever registered a pairing token. */
 export function hasRegistration(session: string): boolean {
   return registry.has(norm(session));

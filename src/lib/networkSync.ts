@@ -197,10 +197,14 @@ export class NetworkSync {
   }
 
   private ingestEntries(entries: StoredEntry[]): void {
+    // A malformed or partial SSE/poll payload must never manufacture alerts
+    // from string characters or nulls.
+    if (!Array.isArray(entries)) return;
     let newest = this.cursor;
     for (const e of entries) {
+      if (!e || typeof e !== "object" || typeof e.id !== "string") continue;
       const st = e.serverTime ?? e.timestamp;
-      if (st > newest) newest = st;
+      if (typeof st === "number" && st > newest) newest = st;
       const prevStatus = this.knownStatus.get(e.id);
       if (prevStatus && e.status && e.status !== prevStatus) {
         this.cfg.onStatusUpdate?.(e.id, e.status as NonNullable<StoredEntry["status"]>);
@@ -216,12 +220,12 @@ export class NetworkSync {
           // bound memory on long-running dashboards
           for (const id of Array.from(this.seenIds).slice(0, 1000)) this.seenIds.delete(id);
         }
+        // The first sighting carries the current status on the entry itself, so
+        // a separate status callback would be a duplicate.
         this.cfg.onAlert?.(e);
-      } else if (e.status === "acknowledge" || e.status === "escalate" || e.status === "resolve") {
-        this.cfg.onStatusUpdate?.(e.id, e.status);
       }
     }
-    this.cursor = Math.max(this.cursor, newest);
+    if (typeof newest === "number") this.cursor = Math.max(this.cursor, newest);
   }
 
   private closeSse(): void {

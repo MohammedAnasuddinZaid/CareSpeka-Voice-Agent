@@ -146,7 +146,7 @@ function observationSeries(patient: ClinicalPatient): Array<{ label: string; sor
 // ---------------------------------------------------------------------------
 
 const RE = {
-  live: /\b(live|current|right now|at the moment|this moment|latest)\b[\s\S]*\b(reading|readings|vitals?|observations?|numbers?|values?|status)\b|\b(reading|readings|vitals?|observations?|numbers?)\b[\s\S]*\b(right now|right this moment|currently|live|at the moment|at this moment|now)\b|\b(how (?:is|are|'s)|how is)\b[\s\S]*\b(doing|now|today|right now)\b|\bwhat(?:'s| is) (?:she|he|they|the patient|the lady|the man|the person) (?:doing|like)\b|\bstatus(?: right now| now| update)?\b|\bis (?:she|he|they|the patient) (?:ok|okay|alright|stable|safe)\b|\banything (?:wrong|urgent|concerning|to worry)\b|\bhow (?:is|are) (?:things|we|the readings?)\b|\bwhat are (?:the|her|his|their) readings?\b|\bany readings?\b/i,
+  live: /\b(live|current|right now|at the moment|this moment|latest)\b[\s\S]*\b(readings?|vitals?|numbers?|values?|status)\b|\b(readings?|vitals?|numbers?)\b[\s\S]*\b(right now|right this moment|currently|live|at the moment|at this moment|now)\b|\b(how (?:is|are|'s)|how is)\b[\s\S]*\b(doing|now|today|right now)\b|\bwhat(?:'s| is) (?:she|he|they|the patient|the lady|the man|the person) (?:doing|like)\b|\bstatus(?: right now| now| update)?\b|\bis (?:she|he|they|the patient) (?:ok|okay|alright|stable|safe)\b|\banything (?:wrong|urgent|concerning|to worry)\b|\bhow (?:is|are) (?:things|we|the readings?)\b|\bwhat are (?:the|her|his|their) readings?\b|\bany readings?\b/i,
   closest:
     /\b(closest|nearest)\b[\s\S]*\b(threshold|limit|border|line|breach)\b|\b(near|close to|about to (?:breach|cross|trip))\b[\s\S]*\b(threshold|limit)\b|\bwhich reading\b|\bwhat(?:'s| is) (?:the )?(?:most )?(?:concerning|abnormal|out of range)\b/i,
   trend:
@@ -154,14 +154,93 @@ const RE = {
   changed:
     /\bwhat(?:'s| has| have)? changed\b|\banything (?:new|changed)\b|\bsince (?:the )?last (?:call|session|time|contact|visit)\b|\bupdate me\b|\bwhat(?:'s| is) new since\b/i,
   documents:
-    /\b(what|which|list|show)\b[\s\S]*\b(documents?|records?|files?|notes?|letters?|reports?|uploads?|attachments?|papers?)\b|\binserted (?:record|note|documents?)\b|\bwhat (?:have|do) (?:you|we) (?:got|have)\b|\bon file\b/i,
+    /\b(what|which|list|show)\b[\s\S]*\b(documents?|records?|files?|notes?|letters?|reports?|uploads?|attachments?|papers?)\b|\binserted (?:record|note|documents?)\b|\bwhat (?:have|do) (?:you|we) (?:got|have)\b[\s\S]*\b(on file|in the record|recorded|for (?:her|him|them|the patient))\b|\bon file\b/i,
   lastCall:
     /\blast (?:call|session|conversation|contact)\b|\bprevious (?:call|session|conversation)\b|\bwhat did\b[\s\S]*\bsay\b|\brecap\b|\bsummar(?:y|ise|ize)\b[\s\S]*\b(call|session|conversation)\b|\btranscript\b/i,
   tasks: /\b(follow.?up|tasks?|to.?do|outstanding|pending|open items?|action items?|anything (?:for|else for) me)\b/i,
 };
 
+/** A record detail noun should win over the generic "what are her readings" intent. */
+const DETAIL_NOUN =
+  /\b(medications?|medicines?|meds?|drugs?|doses?|dosages?|prescriptions?|allerg(?:y|ies)|conditions?|diagnos\w*|care plan|tasks?|follow.?up|messages?|wound|symptoms?|swelling|pain|breathlessness|breathing)\b/i;
+
+/** "What did the notes say about X?" wants the content, not the document list. */
+const DOCUMENT_CONTENT =
+  /\bwhat did\b|\baccording to\b|\bmention(?:ed|s)?\b|\bsay about\b|\btell me what\b|\bwhat do the (?:notes?|records?) (?:say|show)\b/i;
+
+/** A document question ("what do the notes say") is not a last-call recap. */
+const DOCUMENT_NOUN = /\b(notes?|records?|documents?|letters?|reports?|chart|inserted)\b/i;
+const CALL_NOUN = /\b(call|session|conversation|transcript|contact)\b/i;
+
+const LATEST_VALUE = /\b(latest|last|current|most recent|recent)\b/i;
+
+/**
+ * Plain-English names the nurse uses for a chart series. Without these,
+ * "how is her bp trending?" fell back to every series instead of the one the
+ * question named.
+ */
+const LABEL_ALIASES: Record<string, string[]> = {
+  "blood pressure": ["bp", "systolic", "diastolic"],
+  "systolic bp": ["bp", "systolic"],
+  "heart rate": ["hr", "pulse"],
+  "respiratory rate": ["rr", "breathing rate"],
+  "oxygen saturation": ["spo2", "sats", "sat", "o2", "oxygen"],
+  spo2: ["oxygen", "sats", "sat"],
+  temperature: ["temp", "fever"],
+  "blood glucose": ["sugar", "glucose", "bgl"],
+  "fasting glucose": ["sugar", "glucose", "bgl", "fasting"],
+  "blood ketones": ["ketones"],
+  weight: ["wt"],
+  creatinine: ["kidney", "renal"],
+  egfr: ["kidney", "renal"],
+  inr: ["clotting", "warfarin", "thin"],
+  "peak flow": ["peakflow", "pf"],
+  "pain score": ["pain"],
+  haemoglobin: ["hb", "anaemia", "anemia"],
+  "c-reactive protein": ["crp", "inflammation"],
+  esr: ["inflammation"],
+  nihss: ["stroke", "neuro"],
+};
+
+const GENERIC_LABEL_WORDS = new Set([
+  "blood",
+  "heart",
+  "pressure",
+  "score",
+  "rate",
+  "ratio",
+  "protein",
+  "walking",
+  "fasting",
+]);
+
+function phraseMatch(question: string, phrase: string): boolean {
+  const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^a-z0-9])${escaped}(?:s|es)?(?=$|[^a-z0-9])`, "i").test(question);
+}
+
+/** True when the question names this chart series, directly or by alias. */
+function labelMatches(question: string, label: string): boolean {
+  const key = label.toLowerCase();
+  const direct = [key, ...(LABEL_ALIASES[key] ?? [])];
+  if (direct.some((alias) => phraseMatch(question, alias))) return true;
+  const distinctive = key
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length >= 6 && !GENERIC_LABEL_WORDS.has(w));
+  return distinctive.some((w) => phraseMatch(question, w));
+}
+
 function citationsFromRecords(records: QuickRecord[]): QuickAnswer["citations"] {
   return records.slice(0, 4).map((r) => ({ title: r.title, kind: "record", source: r.source, at: r.createdAt }));
+}
+
+/** Reading the findings the way a nurse would say them, including signal loss. */
+function findingPhrase(finding: QuickFinding): string {
+  if (finding.key === "signal_stale") {
+    return `no fresh device readings (last signal ${finding.reading})`;
+  }
+  if (finding.key === "sos") return "the wearable SOS is active";
+  return `${finding.label.toLowerCase()} ${finding.reading}`;
 }
 
 /** 1. Live readings — what the device is streaming now. */
@@ -171,7 +250,7 @@ function liveAnswer(input: QuickAnswerInput): QuickAnswer {
   const parts = readingParts(metrics, vitals);
 
   if (findings.length) {
-    const findingsText = findings.map((f) => `${f.label.toLowerCase()} ${f.reading}`).join(", ");
+    const findingsText = findings.map(findingPhrase).join(", ");
     const worst = findings[0];
     const lead = pick(
       [
@@ -182,7 +261,12 @@ function liveAnswer(input: QuickAnswerInput): QuickAnswer {
       `${name}|${worst.key}|${worst.reading}`
     );
     const tail = parts.length ? ` The full live readings are ${parts.join(", ")}.` : "";
-    const check = ` Start with the ${worst.label.toLowerCase()}: ${worst.reading}.`;
+    const check =
+      worst.key === "signal_stale"
+        ? " Check the patient device and the patient now."
+        : worst.key === "sos"
+          ? " Confirm the patient is safe first."
+          : ` Start with the ${worst.label.toLowerCase()}: ${worst.reading}.`;
     return {
       text: `${lead}${tail}${check}`,
       intent: "live_readings",
@@ -351,10 +435,7 @@ function trendAnswer(input: QuickAnswerInput): QuickAnswer | null {
   if (!series.length) return null;
 
   const lower = question.toLowerCase();
-  const mentioned = series.filter((s) => {
-    const words = s.label.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
-    return words.some((w) => lower.includes(w)) || lower.includes(s.label.toLowerCase());
-  });
+  const mentioned = series.filter((s) => labelMatches(lower, s.label));
 
   const chosen = mentioned.length ? mentioned : series.filter((s) => s.sorted.length >= 2);
   const list = chosen.length ? chosen : series;
@@ -542,16 +623,26 @@ function tasksAnswer(input: QuickAnswerInput): QuickAnswer {
 export function quickAnswer(input: QuickAnswerInput): QuickAnswer | null {
   const q = input.question.trim();
   if (!q) return null;
+  const series = observationSeries(input.patient);
 
   // Order matters. The most specific intents run first so a broad phrase like
   // "last call" cannot swallow a document list or a trend question.
   if (RE.closest.test(q)) return thresholdAnswer(input);
   if (RE.changed.test(q)) return changedAnswer(input);
-  if (RE.documents.test(q)) return documentsAnswer(input);
-  if (RE.lastCall.test(q)) return lastCallAnswer(input);
+  if (RE.documents.test(q) && !DOCUMENT_CONTENT.test(q)) return documentsAnswer(input);
+  if (RE.lastCall.test(q) && !(DOCUMENT_NOUN.test(q) && !CALL_NOUN.test(q))) return lastCallAnswer(input);
   if (RE.tasks.test(q)) return tasksAnswer(input);
-  if (RE.live.test(q)) return liveAnswer(input);
-  if (RE.trend.test(q) && observationSeries(input.patient).length) {
+
+  // "What is her latest potassium?" names a chart series, so answer with that
+  // series (and its direction) rather than the generic device readings.
+  const namesSeries = series.some((s) => labelMatches(q, s.label));
+  if (namesSeries && (RE.trend.test(q) || LATEST_VALUE.test(q))) {
+    const answer = trendAnswer(input);
+    if (answer) return answer;
+  }
+
+  if (RE.live.test(q) && !DETAIL_NOUN.test(q)) return liveAnswer(input);
+  if (RE.trend.test(q) && series.length) {
     const answer = trendAnswer(input);
     if (answer) return answer;
   }

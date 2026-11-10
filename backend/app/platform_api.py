@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import json
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
@@ -20,6 +21,12 @@ from app.auth import AuthError, audit, current_user, ensure_patient_access, requ
 from app.config import settings
 from app.telephony import numbers, registry
 from app.telephony.models import FamilyRequestState, MessageChannel, UserRole
+from app.telephony.service import (
+    public_call,
+    public_escalation,
+    public_message,
+    strip_full_numbers,
+)
 
 router = APIRouter(prefix="/api/platform", tags=["platform"])
 
@@ -105,6 +112,47 @@ def _public_contact(contact: dict[str, Any]) -> dict[str, Any]:
 
 def _masked(value: Optional[str]) -> str:
     return numbers.mask(value)
+
+
+def _public_event(event: dict[str, Any]) -> dict[str, Any]:
+    """Serialise a stored provider event without full phone numbers.
+
+    Provider webhook payloads routinely contain the caller/callee numbers, and
+    the raw JSON is kept for diagnostics.  It is parsed and scrubbed here so the
+    dashboard never sees a complete E.164 string.
+    """
+    data = dict(event)
+    raw = data.pop("payload_json", None)
+    payload: Any = {}
+    if isinstance(raw, str) and raw.strip():
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError):
+            payload = {}
+    elif isinstance(raw, (dict, list)):
+        payload = raw
+    data["payload"] = strip_full_numbers(payload)
+    return strip_full_numbers(data)
+
+
+def _public_job(job: dict[str, Any]) -> dict[str, Any]:
+    """Serialise a scheduled job, masking the dialled number in its payload.
+
+    Follow-up jobs keep the full E.164 string so the scheduler can dial it; the
+    dashboard only ever sees the masked tail.
+    """
+    data = dict(job)
+    payload = data.get("payload")
+    if isinstance(payload, dict):
+        payload = dict(payload)
+        for full_key in ("to_number", "from_number", "phone_e164"):
+            raw = payload.pop(full_key, None)
+            if raw:
+                payload.setdefault("to_masked", numbers.mask(raw))
+        # Internal convenience fields that must not reach the dashboard.
+        payload.pop("patient_name", None)
+        data["payload"] = strip_full_numbers(payload)
+    return strip_full_numbers(data)
 
 
 def _refresh_provider_from_secrets() -> None:
@@ -251,11 +299,11 @@ async def patient_detail(patient_id: int, user: dict[str, Any] = Depends(current
         "ok": True,
         "patient": patient,
         "contacts": [_public_contact(c) for c in contacts],
-        "calls": calls,
-        "messages": messages,
-        "escalations": escalations,
+        "calls": [public_call(c) for c in calls],
+        "messages": [public_message(m) for m in messages],
+        "escalations": [public_escalation(e) for e in escalations],
         "permissions": permissions,
-        "follow_ups": jobs,
+        "follow_ups": [_public_job(j) for j in jobs],
     }
 
 
@@ -456,7 +504,7 @@ async def list_calls(
     calls = await asyncio.to_thread(
         lambda: database.list_telephony_calls(patient_id=patient_id, limit=limit)
     )
-    return {"ok": True, "calls": calls, "telephony": registry.provider_summary()}
+    return {"ok": True, "calls": [public_call(c) for c in calls], "telephony": registry.provider_summary()}
 
 
 @router.post("/calls")
@@ -499,7 +547,7 @@ async def call_detail(call_id: str, user: dict[str, Any] = Depends(current_user)
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Call not found."})
     ensure_patient_access(user, call.get("patient_id"))
     events = await asyncio.to_thread(database.list_call_events, call_id)
-    return {"ok": True, "call": call, "events": events}
+    return {"ok": True, "call": public_call(call), "events": [_public_event(e) for e in events]}
 
 
 @router.post("/calls/{call_id}/end")
@@ -529,7 +577,7 @@ async def list_messages(
     if patient_id is not None:
         ensure_patient_access(user, patient_id)
     messages = await asyncio.to_thread(lambda: database.list_messages(patient_id=patient_id, limit=limit))
-    return {"ok": True, "messages": messages, "telephony": registry.provider_summary()}
+    return {"ok": True, "messages": [public_message(m) for m in messages], "telephony": registry.provider_summary()}
 
 
 @router.post("/messages")
@@ -584,7 +632,14 @@ async def list_escalations(
         e["id"]: await asyncio.to_thread(database.list_escalation_actions, e["id"])
         for e in escalations[:20]
     }
-    return {"ok": True, "escalations": escalations, "actions": actions}
+    return {
+        "ok": True,
+        "escalations": [public_escalation(e) for e in escalations],
+        "actions": {
+            key: [strip_full_numbers(action) for action in value]
+            for key, value in actions.items()
+        },
+    }
 
 
 @router.get("/escalations/{escalation_id}")
@@ -594,7 +649,11 @@ async def escalation_detail(escalation_id: str, user: dict[str, Any] = Depends(c
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Escalation not found."})
     ensure_patient_access(user, escalation.get("patient_id"))
     actions = await asyncio.to_thread(database.list_escalation_actions, escalation_id)
-    return {"ok": True, "escalation": escalation, "actions": actions}
+    return {
+        "ok": True,
+        "escalation": public_escalation(escalation),
+        "actions": [strip_full_numbers(action) for action in actions],
+    }
 
 
 @router.post("/escalations/{escalation_id}/ack")
@@ -608,7 +667,12 @@ async def acknowledge_escalation(
     if escalation is None:
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Escalation not found."})
     ensure_patient_access(user, escalation.get("patient_id"))
-    result = await request.app.state.service.acknowledge_escalation(escalation_id, actor=user, note=body.note)
+    result = await asyncio.to_thread(
+        request.app.state.service.acknowledge_escalation,
+        escalation_id,
+        actor=user,
+        note=body.note,
+    )
     await asyncio.to_thread(
         audit, user, "escalation.ack", entity_type="escalation", entity_id=escalation_id,
         patient_id=escalation.get("patient_id"),
@@ -627,7 +691,12 @@ async def resolve_escalation(
     if escalation is None:
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Escalation not found."})
     ensure_patient_access(user, escalation.get("patient_id"))
-    result = await request.app.state.service.resolve_escalation(escalation_id, actor=user, note=body.note)
+    result = await asyncio.to_thread(
+        request.app.state.service.resolve_escalation,
+        escalation_id,
+        actor=user,
+        note=body.note,
+    )
     await asyncio.to_thread(
         audit, user, "escalation.resolve", entity_type="escalation", entity_id=escalation_id,
         patient_id=escalation.get("patient_id"),
@@ -804,7 +873,7 @@ async def schedule_follow_up(
         audit, user, "followup.schedule", entity_type="job", entity_id=job["id"],
         patient_id=body.patient_id, detail={"kind": body.kind, "delay_minutes": body.delay_minutes},
     )
-    return {"ok": True, "job": job}
+    return {"ok": True, "job": _public_job(job)}
 
 
 @router.get("/follow-ups")
@@ -817,7 +886,7 @@ async def list_follow_ups(
     jobs = await asyncio.to_thread(
         lambda: database.list_jobs(patient_id=patient_id, limit=100)
     )
-    return {"ok": True, "jobs": jobs}
+    return {"ok": True, "jobs": [_public_job(j) for j in jobs]}
 
 
 @router.post("/follow-ups/{job_id}/cancel")
