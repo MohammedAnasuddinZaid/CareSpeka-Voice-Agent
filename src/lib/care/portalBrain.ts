@@ -60,7 +60,8 @@ import {
   type QuestionScope,
 } from "./knowledge";
 import { CARE_KNOWLEDGE } from "./careKnowledge";
-import type { ClinicalPatient, PatientRecord, SessionPatientLink } from "./types";
+import { quickAnswer } from "./quickAnswers";
+import type { CareSession, ClinicalPatient, PatientRecord, SessionPatientLink } from "./types";
 
 // ---------------------------------------------------------------------------
 // signals
@@ -880,14 +881,30 @@ export async function executePortalAction(
   return { messageId: message.id };
 }
 
-function assistantContextFor(patient: ClinicalPatient): AssistantContext {
+function assistantContextFor(patient: ClinicalPatient, extras: PatientExtras = {}): AssistantContext {
+  const sessions = [...(extras.sessions ?? [])].sort((a, b) =>
+    (b.createdAt ?? "").localeCompare(a.createdAt ?? "")
+  );
+  const lastSession = sessions[0] ?? null;
+  const lastTranscript =
+    (lastSession
+      ? extras.transcripts?.find((t) => t.sessionId === lastSession.id)?.entries
+      : extras.transcripts?.[0]?.entries) ?? [];
+  const lastReport =
+    (lastSession ? extras.reports?.find((r) => r.sessionId === lastSession.id) : undefined) ??
+    extras.reports?.[0] ??
+    null;
+  const openTasks = (extras.tasks ?? []).filter((t) => t.status === "open");
+  const messages = [...(extras.messages ?? [])].sort((a, b) =>
+    (b.createdAt ?? "").localeCompare(a.createdAt ?? "")
+  );
   const ctx: PatientContext = {
     patient,
-    lastSession: null,
-    lastTranscript: [],
-    lastReport: null,
-    openTasks: [],
-    messages: [],
+    lastSession,
+    lastTranscript,
+    lastReport,
+    openTasks,
+    messages,
   };
   return { patients: [ctx], focused: ctx };
 }
@@ -899,6 +916,11 @@ function assistantContextFor(patient: ClinicalPatient): AssistantContext {
  *  treating it as a structured intent made every free-form question bypass
  *  Gemini. Overview/history questions instead go to Gemini (which also sees the
  *  inserted free-text records), with the deterministic overview as the fallback.
+ *
+ *  The recap, follow-up, message and escalation intents ARE deterministic now
+ *  that the loader hands this engine the recent sessions, transcripts, reports
+ *  and tasks — so "what did she say last call" and "any open follow-up" no
+ *  longer wait on a model.
  */
 const STRUCTURED_INTENTS = new Set([
   "medications",
@@ -906,10 +928,18 @@ const STRUCTURED_INTENTS = new Set([
   "observations",
   "conditions",
   "care_plan",
+  "last_session",
+  "tasks",
+  "messages",
+  "escalations",
 ]);
 
-function rulesAnswer(question: string, patient: ClinicalPatient): { text: string; intent: string } | null {
-  const result = answerQuestion(question, assistantContextFor(patient));
+function rulesAnswer(
+  question: string,
+  patient: ClinicalPatient,
+  extras: PatientExtras = {}
+): { text: string; intent: string } | null {
+  const result = answerQuestion(question, assistantContextFor(patient, extras));
   if (!STRUCTURED_INTENTS.has(result.intent)) return null;
   return { text: result.answer, intent: result.intent };
 }
@@ -927,7 +957,10 @@ async function loadKnowledgeExtras(patientId: string): Promise<PatientExtras> {
       listTasks(patientId).catch(() => []),
       listMessages(patientId).catch(() => []),
     ]);
-    const recent = sessions.filter((s) => s.patientId === patientId).slice(0, 2);
+    const recent = sessions
+      .filter((s) => s.patientId === patientId)
+      .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))
+      .slice(0, 2);
     const [transcripts, reports] = await Promise.all([
       Promise.all(
         recent.map(async (session) => ({
@@ -943,6 +976,7 @@ async function loadKnowledgeExtras(patientId: string): Promise<PatientExtras> {
       reports: reports.filter((r): r is NonNullable<typeof r> => Boolean(r)),
       tasks,
       messages,
+      sessions: recent as CareSession[],
     };
   } catch {
     return {};
@@ -951,6 +985,7 @@ async function loadKnowledgeExtras(patientId: string): Promise<PatientExtras> {
 
 function extrasSignature(extras: PatientExtras): string {
   return [
+    ...(extras.sessions ?? []).map((s) => `${s.id}:${s.status}:${s.escalated ? 1 : 0}`),
     ...(extras.transcripts ?? []).map((t) => `${t.sessionId}:${t.entries.length}`),
     ...(extras.reports ?? []).map((r) => `${r.id}:${r.status}`),
     ...(extras.tasks ?? []).map((t) => `${t.id}:${t.status}`),
@@ -1245,9 +1280,37 @@ export async function askPortal(
     };
   }
 
+  // 0. Deterministic, question-shaped lookups: live readings, closest to
+  //    threshold, trends, what changed since the last call, documents on file,
+  //    the last call recap and open follow-up. These are exact, instant and
+  //    read the specific series or record the nurse asked about, so a different
+  //    question gives a different answer. Skipped for general-knowledge and full
+  //    history questions, which want the richer model path.
+  if (!historyQ && route.scope !== "general") {
+    const quick = quickAnswer({
+      question,
+      patient,
+      metrics: ctx.metrics,
+      vitals: ctx.vitals,
+      findings: ctx.findings,
+      records: ctx.records,
+      extras,
+    });
+    if (quick) {
+      const meta = {
+        intent: quick.intent,
+        scope: quick.scope as QuestionScope,
+        grounded: quick.grounded,
+        citations: quick.citations,
+      };
+      await cachePut(key, quick.text, "rules", meta);
+      return finish(quick.text, "rules", "rules", false, meta);
+    }
+  }
+
   // 1. Exact structured answers first — free and never wrong. History and
   //    general-knowledge questions skip this so they get the richer path.
-  const exact = historyQ || route.scope === "general" ? null : rulesAnswer(question, patient);
+  const exact = historyQ || route.scope === "general" ? null : rulesAnswer(question, patient, extras);
   if (exact) {
     const scope: QuestionScope = route.scope === "mixed" ? "record" : route.scope;
     const meta = { intent: exact.intent, scope, grounded: true };
@@ -1381,8 +1444,17 @@ export async function askPortal(
 }
 
 function isHistoryQuestion(question: string): boolean {
-  return /\b(history|background|summar(?:y|ise|ize)|overview|everything|profile|past|previous|records?)\b/i.test(question) &&
-    !/last\s+(call|session|conversation)\b/i.test(question);
+  const wantsHistory =
+    /\b(history|background|summar(?:y|ise|ize)|overview|everything|profile|past|previous|records?)\b/i.test(question);
+  if (!wantsHistory) return false;
+  if (/last\s+(call|session|conversation)\b/i.test(question)) return false;
+  // "What records/documents are on file?" is a short lookup, not a full
+  // history review, so it should reach the fast document answer instead.
+  const wantsDocuments =
+    /\b(what|which|list|show|any|do|have|on file|inserted)\b[\s\S]*\b(records?|documents?|files?|notes?|letters?)\b/i.test(
+      question
+    );
+  return !wantsDocuments;
 }
 
 function historySignature(history: PortalChatTurn[]): string {

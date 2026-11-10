@@ -24,6 +24,7 @@
 import MiniSearch from "minisearch";
 import type {
   CareReport,
+  CareSession,
   CareTask,
   CareTranscriptEntry,
   ClinicalPatient,
@@ -86,6 +87,8 @@ export interface PatientExtras {
   reports?: CareReport[];
   tasks?: CareTask[];
   messages?: PatientMessage[];
+  /** The most recent sessions for this patient, newest first. Used by the recap. */
+  sessions?: CareSession[];
 }
 
 const STOPWORDS = new Set(
@@ -489,6 +492,61 @@ function indexPassages(passages: Passage[]): MiniSearch<IndexedPassage> {
   return mini;
 }
 
+// ---------------------------------------------------------------------------
+// index cache
+// ---------------------------------------------------------------------------
+//
+// Building a MiniSearch index is the single most expensive step in a turn, and
+// the same chart is rebuilt on every question (the patient row plus the newest
+// records). The chart changes rarely, so an index is cached against a cheap
+// content signature: build once, then answer subsequent questions in
+// microseconds. The cache is small (LRU-ish, insert-order eviction) so a busy
+// process cannot grow without bound.
+
+const INDEX_CACHE = new Map<string, MiniSearch<IndexedPassage>>();
+const INDEX_CACHE_MAX = 40;
+
+function fnv1a(input: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i += 1) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/** Cheap, collision-resistant-enough signature of the passage set. */
+export function passagesSignature(passages: Passage[]): string {
+  let acc = `${passages.length}`;
+  for (const p of passages) {
+    acc += `|${fnv1a(`${p.id}\u0001${p.title}\u0001${p.text}\u0001${p.at ?? ""}\u0001${p.source ?? ""}`).toString(36)}`;
+  }
+  return `${passages.length}:${fnv1a(acc).toString(36)}`;
+}
+
+function getIndex(passages: Passage[]): MiniSearch<IndexedPassage> {
+  const key = passagesSignature(passages);
+  const cached = INDEX_CACHE.get(key);
+  if (cached) {
+    // Refresh recency: delete + re-set moves the key to the end of the Map.
+    INDEX_CACHE.delete(key);
+    INDEX_CACHE.set(key, cached);
+    return cached;
+  }
+  const built = indexPassages(passages);
+  INDEX_CACHE.set(key, built);
+  if (INDEX_CACHE.size > INDEX_CACHE_MAX) {
+    const oldest = INDEX_CACHE.keys().next().value;
+    if (oldest !== undefined) INDEX_CACHE.delete(oldest);
+  }
+  return built;
+}
+
+/** Test hook: drop every cached index. */
+export function clearRetrievalCache(): void {
+  INDEX_CACHE.clear();
+}
+
 /**
  * Ranks the passages against a question. `strong` is false when only a stray
  * word matched — callers should then say the record does not contain the answer
@@ -505,7 +563,7 @@ export function retrievePassages(
   const minMatched = opts.minMatched ?? 1;
   if (!terms.length || !passages.length) return { passages: [], strong: false, terms };
 
-  const mini = indexPassages(passages);
+  const mini = getIndex(passages);
   const query = terms.join(" ");
   let raw: Array<{ id: string; score: number }> = [];
   try {
@@ -516,6 +574,10 @@ export function retrievePassages(
 
   const byId = new Map(passages.map((p) => [p.id, p]));
   const best = raw[0]?.score ?? 0;
+  // Terms long enough to be a real clinical subject (a drug, a condition, a
+  // measure). A hit that puts one of these in the passage title is almost always
+  // the passage the nurse wants, so it earns a small, bounded bonus.
+  const focusTerms = terms.filter((t) => t.length >= 4);
   const scored: RetrievedPassage[] = [];
   for (const hit of raw) {
     const passage = byId.get(String(hit.id));
@@ -524,6 +586,8 @@ export function retrievePassages(
     const hay = passageSearchText(passage).toLowerCase();
     const matchedTerms = terms.filter((t) => hay.includes(t));
     if (matchedTerms.length < minMatched) continue;
+    const title = passage.title.toLowerCase();
+    const titleFocus = focusTerms.some((t) => title.includes(t));
     const weight = passage.weight ?? 1;
     // A small recency boost for documents; old letters still rank if relevant.
     const at = passage.at ? Date.parse(passage.at) : NaN;
@@ -531,7 +595,7 @@ export function retrievePassages(
     const recency = passage.kind === "record" || passage.kind === "transcript" ? Math.max(0, 0.12 - ageDays / 3650) : 0;
     scored.push({
       ...passage,
-      score: hit.score * weight + recency,
+      score: hit.score * weight * (titleFocus ? 1.15 : 1) + recency,
       excerpt: excerptFor(passage.text, terms),
       matchedTerms,
     });

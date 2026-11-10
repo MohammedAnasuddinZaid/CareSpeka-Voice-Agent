@@ -21,6 +21,7 @@ import {
   ClipboardCopy,
   Download,
   Eye,
+  HeartPulse,
   Link2,
   Loader2,
   Mic,
@@ -28,8 +29,15 @@ import {
   PhoneCall,
   PhoneOff,
   Send,
+  ShieldAlert,
+  Sparkles,
+  Stethoscope,
+  Thermometer,
+  Timer,
   Volume2,
+  VolumeX,
   Waves,
+  Wind,
 } from "lucide-react";
 import {
   CareApiError,
@@ -142,6 +150,28 @@ function reading(value: number | undefined, suffix: string, digits = 0): string 
   return `${value.toFixed(digits)}${suffix}`;
 }
 
+/** Read a numeric wearable value without trusting the shape of the payload. */
+function vitalNumber(vitals: Record<string, unknown> | null, key: string): number | undefined {
+  const raw = vitals?.[key];
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
+}
+
+/** Two initials for the call avatar, e.g. "Anita Sharma" -> "AS". */
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+/** mm:ss call clock. */
+function fmtDuration(totalSeconds: number): string {
+  const safe = Math.max(0, Math.floor(totalSeconds));
+  const m = Math.floor(safe / 60);
+  const s = safe % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
 function normalizeSessionId(raw: string | null | undefined): string {
   const clean = raw?.trim().toUpperCase() ?? "";
   return /^[A-Z0-9_-]{3,32}$/.test(clean) ? clean : "";
@@ -223,6 +253,12 @@ export default function BrowserCall({
   const [copied, setCopied] = useState(false);
   const [followUps, setFollowUps] = useState<string[]>([]);
 
+  // Advanced: a live call clock and a lightweight animated waveform so the call
+  // feels alive without any extra network or audio work.
+  const [callSeconds, setCallSeconds] = useState(0);
+  const [waveTick, setWaveTick] = useState(0);
+  const [endedAt, setEndedAt] = useState<{ seconds: number; turns: number } | null>(null);
+
   const turnsRef = useRef<Turn[]>([]);
   turnsRef.current = turns;
 
@@ -244,6 +280,8 @@ export default function BrowserCall({
   activeSessionIdRef.current = activeSessionId;
   const askRef = useRef<(text: string) => Promise<void>>(async () => undefined);
   const endRef = useRef<HTMLDivElement | null>(null);
+  const callSecondsRef = useRef(0);
+  callSecondsRef.current = callSeconds;
 
   const append = useCallback(
     (
@@ -556,7 +594,7 @@ export default function BrowserCall({
   }, [activeSessionId, started]);
 
   // While the call is live, keep the readings fresh without ever flashing the
-  // loading state (the signal chips should update on their own).
+  // loading state (the signal tiles should update on their own).
   useEffect(() => {
     if (!started || !activeSessionId) return;
     let active = true;
@@ -588,6 +626,23 @@ export default function BrowserCall({
     endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
   }, [turns.length, thinking]);
 
+  // Call clock — runs only while a call is live.
+  useEffect(() => {
+    if (!started) {
+      setCallSeconds(0);
+      return;
+    }
+    const timer = window.setInterval(() => setCallSeconds((s) => s + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [started]);
+
+  // Waveform tick — a small, CPU-cheap animation frame source for the meter.
+  useEffect(() => {
+    if (!started) return;
+    const timer = window.setInterval(() => setWaveTick((v) => (v + 1) % 1000), 260);
+    return () => window.clearInterval(timer);
+  }, [started]);
+
   // --- call control ---------------------------------------------------------
 
   const startCall = useCallback(() => {
@@ -595,6 +650,7 @@ export default function BrowserCall({
     startedRef.current = true;
     wantMicRef.current = true;
     setStarted(true);
+    setEndedAt(null);
     setMicError(null);
     setSendError(null);
     thinkingRef.current = true;
@@ -632,6 +688,9 @@ export default function BrowserCall({
     stopSpeaking();
     setSpeaking(false);
     setStarted(false);
+    if (turnsRef.current.length) {
+      setEndedAt({ seconds: callSecondsRef.current, turns: turnsRef.current.length });
+    }
   }, [stopListening]);
 
   const toggleMic = useCallback(() => {
@@ -840,33 +899,44 @@ export default function BrowserCall({
 
   const patient = context?.patient ?? null;
   const metrics = context?.metrics ?? null;
-  const chips = [
-    { label: "Blink rate", value: reading(metrics?.blinkRate, "/min"), icon: Eye },
-    { label: "Alertness", value: reading(metrics?.alertnessScore, "%"), icon: Activity },
+  const vitals = context?.vitals ?? null;
+
+  const tiles = [
+    { label: "Blink rate", value: reading(metrics?.blinkRate, ""), unit: "/min", icon: Eye },
+    { label: "Alertness", value: reading(metrics?.alertnessScore, ""), unit: "%", icon: Activity },
     {
       label: "Eye closure",
-      value: reading(metrics?.eyeClosureDuration != null ? metrics.eyeClosureDuration / 1000 : undefined, "s", 1),
+      value: reading(metrics?.eyeClosureDuration != null ? metrics.eyeClosureDuration / 1000 : undefined, "", 1),
+      unit: "s",
       icon: Eye,
     },
-    { label: "Movement", value: reading(metrics?.movementActivity != null ? metrics.movementActivity * 100 : undefined, "%"), icon: Waves },
-  ].filter((c) => c.value);
+    {
+      label: "Movement",
+      value: reading(metrics?.movementActivity != null ? metrics.movementActivity * 100 : undefined, ""),
+      unit: "%",
+      icon: Waves,
+    },
+    { label: "Oxygen", value: reading(vitalNumber(vitals, "spo2"), ""), unit: "%", icon: Wind },
+    { label: "Heart rate", value: reading(vitalNumber(vitals, "heartRate"), ""), unit: "bpm", icon: HeartPulse },
+    { label: "Temperature", value: reading(vitalNumber(vitals, "temperature"), "", 1), unit: "°C", icon: Thermometer },
+  ].filter((t) => t.value);
 
   const findings = context?.findings ?? [];
   const worst = context?.worst ?? "ok";
 
   const status = loadError
-    ? { label: "Link problem", tone: "bg-red-50 text-red-700 border-red-200" }
+    ? { label: "Link problem", tone: "bg-red-50 text-red-700 border-red-200", dot: "bg-red-500" }
     : loading
-      ? { label: "Loading session", tone: "bg-slate-50 text-slate-600 border-slate-200" }
+      ? { label: "Loading session", tone: "bg-slate-50 text-slate-600 border-slate-200", dot: "bg-slate-400" }
       : !started
-        ? { label: "Ready to call", tone: "bg-emerald-50 text-emerald-700 border-emerald-200" }
+        ? { label: "Ready to call", tone: "bg-emerald-50 text-emerald-700 border-emerald-200", dot: "bg-emerald-500" }
         : speaking
-          ? { label: "Agent speaking", tone: "bg-[#fff1ee] text-[#c63a22] border-[#f0c8bf]" }
+          ? { label: "Agent speaking", tone: "bg-[#fff1ee] text-[#c63a22] border-[#f0c8bf]", dot: "bg-[#c63a22]" }
           : thinking
-            ? { label: "Checking the record", tone: "bg-amber-50 text-amber-800 border-amber-200" }
+            ? { label: "Checking the record", tone: "bg-amber-50 text-amber-800 border-amber-200", dot: "bg-amber-400" }
             : listening
-              ? { label: "Listening", tone: "bg-emerald-50 text-emerald-700 border-emerald-200" }
-              : { label: "On call", tone: "bg-slate-50 text-slate-600 border-slate-200" };
+              ? { label: "Listening", tone: "bg-emerald-50 text-emerald-700 border-emerald-200", dot: "bg-emerald-500" }
+              : { label: "On call", tone: "bg-slate-50 text-slate-600 border-slate-200", dot: "bg-slate-400" };
 
   const suggestions = patient
     ? (followUps.length ? followUps : context?.suggestedQuestions ?? []).slice(0, compact ? 2 : 3)
@@ -875,71 +945,149 @@ export default function BrowserCall({
         compact ? 2 : 3
       );
 
+  const waveActive = speaking || listening;
+  const waveTone = speaking
+    ? "bg-[#c63a22]"
+    : thinking
+      ? "bg-amber-400"
+      : listening
+        ? "bg-emerald-500"
+        : "bg-[#d8d0cd]";
+  const wave = [12, 18, 24, 14, 20, 12, 18, 26, 15, 21, 11, 17, 9, 15, 22, 13].map((base, i) => {
+    const phase = Math.abs(Math.sin((waveTick + i) * 0.8));
+    const amp = waveActive ? (speaking ? 1 : 0.72) : 0.2;
+    return Math.max(3, Math.round(base * (0.45 + 0.55 * phase) * amp) + 3);
+  });
+
+  const micState = speaking
+    ? { label: "Agent speaking", ring: "bg-[#c63a22]/25", btn: "bg-[#c63a22] text-white hover:bg-[#a92f1b]" }
+    : thinking
+      ? { label: "Checking record", ring: "bg-amber-400/25", btn: "bg-amber-100 text-amber-700 hover:bg-amber-200" }
+      : listening
+        ? { label: "Listening", ring: "bg-emerald-500/25", btn: "bg-emerald-500 text-white hover:bg-emerald-600" }
+        : { label: "Mic is off", ring: "bg-transparent", btn: "border border-[#e5dedb] bg-white text-[#6e6e6e] hover:border-[#c63a22]" };
+
   return (
-    <section className={`flex flex-col overflow-hidden rounded-3xl border border-[#ececec] bg-white shadow-sm ${className}`}>
-      <div className="flex flex-wrap items-start justify-between gap-2 border-b border-[#f0e3de] bg-gradient-to-b from-[#fff7f5] to-white px-4 py-3 sm:px-5">
-        <div className="flex items-start gap-2.5">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#c63a22] text-white">
-            <PhoneCall className="h-4 w-4" />
-          </span>
-          <div>
-            <h2 className="text-sm font-bold text-[#1f1f1f]">Free browser call</h2>
-            <p className="text-[11px] text-[#6e6e6e]">
-              {patient ? (
-                <>
-                  With <span className="font-semibold text-[#1f1f1f]">{patient.displayName}</span>
-                  {patient.room ? ` · ${patient.room}` : ""}
-                </>
-              ) : activeSessionId ? (
-                <>
-                  Live session <span className="font-semibold text-[#1f1f1f]">{activeSessionId}</span> · no patient linked
-                </>
-              ) : (
-                "Same CareSpeak agent — no phone charges"
-              )}
+    <section className={`flex flex-col overflow-hidden rounded-3xl border border-[#ececec] bg-white shadow-[0_18px_50px_-30px_rgba(198,58,34,0.45)] ${className}`}>
+      {/* ── call hero ──────────────────────────────────────────────────── */}
+      <div className="relative overflow-hidden border-b border-[#f0e3de] bg-gradient-to-br from-[#fff6f3] via-white to-[#fffaf9] px-4 pb-4 pt-5 sm:px-6">
+        <div aria-hidden className="pointer-events-none absolute -right-12 -top-16 h-44 w-44 rounded-full bg-[#c63a22]/5 blur-2xl" />
+        <div className="relative flex items-start gap-3">
+          <div className="relative shrink-0">
+            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-[#c63a22] to-[#a92f1b] text-sm font-bold tracking-wide text-white shadow-sm">
+              {patient ? initials(patient.displayName) : <PhoneCall className="h-5 w-5" />}
+            </span>
+            <span
+              className={`absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-white ${
+                !started
+                  ? "bg-slate-300"
+                  : speaking
+                    ? "bg-[#c63a22]"
+                    : listening
+                      ? "bg-emerald-500"
+                      : thinking
+                        ? "bg-amber-400"
+                        : "bg-slate-400"
+              }`}
+            />
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <h2 className="truncate text-base font-bold leading-tight text-[#1f1f1f]">
+                {patient ? patient.displayName : activeSessionId ? "Live care session" : "Free browser call"}
+              </h2>
+              {patient?.synthetic ? (
+                <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-700">
+                  demo
+                </span>
+              ) : null}
+            </div>
+            <p className="mt-0.5 truncate text-xs text-[#6e6e6e]">
+              {patient
+                ? [patient.age ? `${patient.age} y` : null, patient.sex || null, patient.room || null]
+                    .filter(Boolean)
+                    .join(" · ") || "Patient linked"
+                : activeSessionId
+                  ? `Session ${activeSessionId}`
+                  : "Same CareSpeak agent · no phone charges"}
             </p>
           </div>
+
+          <div className="flex shrink-0 flex-col items-end gap-1.5">
+            <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${status.tone}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${status.dot} ${started && !thinking ? "animate-pulse" : ""}`} />
+              {status.label}
+            </span>
+            {started ? (
+              <span className="inline-flex items-center gap-1 font-mono text-[11px] tabular-nums text-[#6e6e6e]">
+                <Timer className="h-3 w-3" /> {fmtDuration(callSeconds)}
+              </span>
+            ) : null}
+          </div>
         </div>
-        <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${status.tone}`}>
-          <span className="h-1.5 w-1.5 rounded-full bg-current" /> {status.label}
-        </span>
+
+        {/* live waveform meter */}
+        {started ? (
+          <div className="relative mt-3 flex items-center gap-3 border-t border-[#f4e7e3] pt-3">
+            <div className="flex h-7 flex-1 items-center gap-[3px]" aria-hidden>
+              {wave.map((h, i) => (
+                <span
+                  key={i}
+                  className={`flex-1 rounded-full transition-[height,background-color] duration-200 ease-out ${waveTone}`}
+                  style={{ height: `${h}px`, opacity: waveActive ? 1 : 0.5 }}
+                />
+              ))}
+            </div>
+            <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-[#8a8a8a]">
+              {speaking ? "Speaking" : thinking ? "Thinking" : listening ? "Listening" : "Live"}
+            </span>
+          </div>
+        ) : null}
       </div>
 
-      {chips.length ? (
-        <div className="flex flex-wrap gap-1.5 border-b border-[#f4efec] px-4 py-2.5 sm:px-5">
-          {chips.map((c) => (
-            <span
-              key={c.label}
-              className="inline-flex items-center gap-1.5 rounded-full border border-[#ececec] bg-[#fbfaf9] px-2.5 py-1 text-[11px] text-[#4b4b4b]"
-            >
-              <c.icon className="h-3 w-3 text-[#c63a22]" />
-              <span className="text-[#8a8a8a]">{c.label}</span>
-              <span className="font-semibold text-[#1f1f1f]">{c.value}</span>
-            </span>
+      {/* ── live readings ──────────────────────────────────────────────── */}
+      {tiles.length ? (
+        <div className="grid grid-cols-2 gap-2 border-b border-[#f4efec] px-4 py-3 sm:grid-cols-4 sm:px-6">
+          {tiles.map((t) => (
+            <div key={t.label} className="rounded-2xl border border-[#f0e9e6] bg-[#fcfbfa] px-3 py-2">
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-[#8a8a8a]">
+                <t.icon className="h-3 w-3 text-[#c63a22]" /> {t.label}
+              </div>
+              <div className="mt-0.5 flex items-baseline gap-0.5">
+                <span className="text-lg font-bold tabular-nums text-[#1f1f1f]">{t.value}</span>
+                <span className="text-[11px] font-medium text-[#8a8a8a]">{t.unit}</span>
+              </div>
+            </div>
           ))}
         </div>
       ) : null}
 
+      {/* ── findings ───────────────────────────────────────────────────── */}
       {findings.length ? (
         <div
-          className={`border-b px-4 py-2 text-[11px] sm:px-5 ${
+          className={`flex items-start gap-2 border-b px-4 py-2.5 text-xs sm:px-6 ${
             worst === "critical"
               ? "border-red-100 bg-red-50 text-red-700"
               : "border-amber-100 bg-amber-50 text-amber-800"
           }`}
         >
-          <span className="font-semibold">{worst === "critical" ? "Critical" : "Watch"}:</span>{" "}
-          {findings.map((f) => `${f.label} ${f.reading}`).join(" · ")}
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <span className="font-semibold">{worst === "critical" ? "Critical reading" : "Watch reading"}:</span>{" "}
+            {findings.map((f) => `${f.label} ${f.reading}`).join(" · ")}
+          </div>
         </div>
       ) : null}
 
-      {/* patient linking */}
+      {/* ── patient linking ────────────────────────────────────────────── */}
       {!loadError && !loading ? (
-        <div className="border-b border-[#f4efec] px-4 py-3 sm:px-5">
+        <div className="border-b border-[#f4efec] px-4 py-3 sm:px-6">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[11px] font-semibold text-[#6e6e6e]">Patient:</span>
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-[#8a8a8a]">Patient</span>
             {context?.patient ? (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
+                <Stethoscope className="h-3 w-3" />
                 {context.patient.displayName}
                 {context.patient.room ? ` · ${context.patient.room}` : ""}
                 <button
@@ -976,7 +1124,7 @@ export default function BrowserCall({
                   onChange={(e) => setPickedPatient(e.target.value)}
                   className="min-w-0 flex-1 rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs outline-none focus:border-[#c63a22]"
                 >
-                  <option value="">Choose a patient…</option>
+                  <option value="">Choose a patient...</option>
                   {visiblePatients.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.displayName}
@@ -1072,10 +1220,11 @@ export default function BrowserCall({
         </div>
       ) : null}
 
+      {/* ── advanced options ───────────────────────────────────────────── */}
       {!loadError && !loading ? (
-        <details className="border-b border-[#f4efec] px-4 py-3 sm:px-5">
-          <summary className="cursor-pointer text-[11px] font-semibold text-[#6e6e6e] hover:text-[#c63a22]">
-            Advanced options (SBAR, chart, transcript, depth)
+        <details className="border-b border-[#f4efec] px-4 py-3 sm:px-6">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[11px] font-semibold text-[#6e6e6e] hover:text-[#c63a22]">
+            <Sparkles className="h-3 w-3" /> Advanced options (SBAR, chart, transcript, depth)
           </summary>
           <div className="mt-3">
             <div className="flex flex-wrap items-center gap-2">
@@ -1146,10 +1295,13 @@ export default function BrowserCall({
         </div>
       ) : null}
 
-      {/* transcript */}
-      <div className={`flex-1 space-y-2.5 overflow-y-auto px-4 py-4 sm:px-5 ${compact ? "max-h-64 min-h-[9rem]" : "min-h-[14rem]"}`}>
+      {/* ── transcript ─────────────────────────────────────────────────── */}
+      <div className={`flex-1 space-y-3 overflow-y-auto px-4 py-4 sm:px-6 ${compact ? "max-h-64 min-h-[9rem]" : "min-h-[14rem]"}`}>
         {!turns.length && !loading ? (
-          <div className="rounded-2xl border border-dashed border-[#e8ddd8] bg-[#fdfbfa] px-4 py-5 text-center text-xs text-[#6e6e6e]">
+          <div className="mx-auto max-w-sm rounded-2xl border border-dashed border-[#e8ddd8] bg-[#fdfbfa] px-4 py-6 text-center text-xs text-[#6e6e6e]">
+            <span className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-[#fff1ee] text-[#c63a22]">
+              <PhoneCall className="h-4 w-4" />
+            </span>
             <p className="font-semibold text-[#1f1f1f]">Ready when you are</p>
             <p className="mt-1">
               Press <span className="font-semibold text-[#c63a22]">Start call</span> and the agent will
@@ -1159,12 +1311,17 @@ export default function BrowserCall({
         ) : null}
 
         {turns.map((t) => (
-          <div key={t.id} className={`flex ${t.role === "caller" ? "justify-end" : "justify-start"}`}>
+          <div key={t.id} className={`flex items-end gap-2 ${t.role === "caller" ? "justify-end" : "justify-start"}`}>
+            {t.role === "agent" ? (
+              <span className="mb-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#c63a22] to-[#a92f1b] text-[9px] font-bold text-white">
+                AI
+              </span>
+            ) : null}
             <div
-              className={`max-w-[88%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed ${
+              className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed shadow-sm ${
                 t.role === "caller"
                   ? "rounded-br-md bg-[#c63a22] text-white"
-                  : "rounded-bl-md border border-[#ececec] bg-[#fbfaf9] text-[#1f1f1f]"
+                  : "rounded-bl-md border border-[#ececec] bg-white text-[#1f1f1f]"
               }`}
             >
               {t.text}
@@ -1185,16 +1342,50 @@ export default function BrowserCall({
 
         {thinking ? (
           <div className="flex justify-start">
-            <div className="inline-flex items-center gap-2 rounded-2xl rounded-bl-md border border-[#ececec] bg-[#fbfaf9] px-3.5 py-2 text-xs text-[#6e6e6e]">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking the care record…
+            <div className="inline-flex items-center gap-2 rounded-2xl rounded-bl-md border border-[#ececec] bg-white px-3.5 py-2 text-xs text-[#6e6e6e] shadow-sm">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-[#c63a22]" /> Checking the care record...
             </div>
           </div>
         ) : null}
         <div ref={endRef} />
       </div>
 
-      {/* controls */}
-      <div className="border-t border-[#f0e3de] px-4 py-4 sm:px-5">
+      {/* ── controls ───────────────────────────────────────────────────── */}
+      <div className="border-t border-[#f0e3de] bg-[#fffdfc] px-4 py-4 sm:px-6">
+        {endedAt ? (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-emerald-100 bg-emerald-50 px-3.5 py-2.5">
+            <div className="flex items-center gap-2 text-xs text-emerald-800">
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              <span>
+                <span className="font-semibold">Call ended</span> · {fmtDuration(endedAt.seconds)} ·{" "}
+                {endedAt.turns} turn{endedAt.turns === 1 ? "" : "s"} captured
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void copyTranscript()}
+                className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-emerald-800 hover:bg-emerald-100"
+              >
+                <ClipboardCopy className="h-3 w-3" /> {copied ? "Copied" : "Copy notes"}
+              </button>
+              <button
+                type="button"
+                onClick={downloadTranscript}
+                className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-emerald-800 hover:bg-emerald-100"
+              >
+                <Download className="h-3 w-3" /> Save
+              </button>
+              <button
+                type="button"
+                onClick={() => setEndedAt(null)}
+                className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        ) : null}
         {micError ? (
           <div className="mb-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {micError}
@@ -1206,76 +1397,79 @@ export default function BrowserCall({
           </div>
         ) : null}
 
-        <div className="flex flex-wrap items-center gap-2">
-          {!started ? (
-            <button
-              type="button"
-              onClick={startCall}
-              disabled={loading || Boolean(loadError) || !activeSessionId}
-              className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#c63a22] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#a92f1b] disabled:opacity-50 sm:flex-none"
-            >
-              <PhoneCall className="h-4 w-4" /> Start call
-            </button>
-          ) : (
-            <>
+        {!started ? (
+          <button
+            type="button"
+            onClick={startCall}
+            disabled={loading || Boolean(loadError) || !activeSessionId}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-b from-[#c63a22] to-[#a92f1b] px-4 py-3.5 text-sm font-semibold text-white shadow-sm transition hover:from-[#a92f1b] hover:to-[#8f2716] disabled:opacity-50"
+          >
+            <PhoneCall className="h-4 w-4" /> Start call
+          </button>
+        ) : (
+          <div className="flex items-start justify-center gap-8 sm:gap-12">
+            <div className="flex flex-col items-center gap-1.5">
+              <button
+                type="button"
+                onClick={toggleVoice}
+                disabled={!ttsAvailable}
+                title={ttsAvailable ? "Toggle spoken replies" : "This browser has no speech synthesis"}
+                className={`inline-flex h-12 w-12 items-center justify-center rounded-full border transition disabled:opacity-40 ${
+                  voiceOn
+                    ? "border-[#ececec] bg-white text-[#c63a22] hover:border-[#c63a22]"
+                    : "border-[#ececec] bg-[#f7f7f7] text-[#8a8a8a]"
+                }`}
+              >
+                {voiceOn ? <Volume2 className="h-5 w-5" /> : <VolumeX className="h-5 w-5" />}
+              </button>
+              <span className="text-[10px] font-semibold text-[#6e6e6e]">{voiceOn ? "Voice on" : "Voice off"}</span>
+            </div>
+
+            <div className="flex flex-col items-center gap-1.5">
               <button
                 type="button"
                 onClick={toggleMic}
                 disabled={thinking || speaking}
-                className={`inline-flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition disabled:opacity-60 sm:flex-none ${
-                  listening
-                    ? "bg-[#c63a22] text-white hover:bg-[#a92f1b]"
-                    : "border border-[#e5dedb] bg-white text-[#1f1f1f] hover:border-[#c63a22]"
-                }`}
+                className={`relative inline-flex h-16 w-16 items-center justify-center rounded-full transition disabled:opacity-70 ${micState.btn}`}
+                aria-label={micState.label}
               >
-                {speaking ? (
-                  <Volume2 className="h-4 w-4" />
-                ) : thinking ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : listening ? (
-                  <Mic className="h-4 w-4" />
-                ) : (
-                  <MicOff className="h-4 w-4" />
-                )}
-                {speaking
-                  ? "Agent speaking…"
-                  : thinking
-                    ? "Checking…"
-                    : listening
-                      ? "Listening — tap to mute"
-                      : "Mic is off — tap to talk"}
+                {(listening || speaking) && !thinking ? (
+                  <span className={`absolute inset-0 animate-ping rounded-full ${micState.ring}`} />
+                ) : null}
+                <span className="relative">
+                  {speaking ? (
+                    <Volume2 className="h-6 w-6" />
+                  ) : thinking ? (
+                    <Loader2 className="h-6 w-6 animate-spin" />
+                  ) : listening ? (
+                    <Mic className="h-6 w-6" />
+                  ) : (
+                    <MicOff className="h-6 w-6" />
+                  )}
+                </span>
               </button>
+              <span className="text-[10px] font-semibold text-[#6e6e6e]">{micState.label}</span>
+            </div>
+
+            <div className="flex flex-col items-center gap-1.5">
               <button
                 type="button"
                 onClick={endCall}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#e5dedb] bg-white px-4 py-3 text-sm font-semibold text-[#6e6e6e] transition hover:border-red-300 hover:text-red-600"
+                className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-600 transition hover:bg-red-100"
+                aria-label="End call"
               >
-                <PhoneOff className="h-4 w-4" /> End call
+                <PhoneOff className="h-5 w-5" />
               </button>
-            </>
-          )}
+              <span className="text-[10px] font-semibold text-[#6e6e6e]">End</span>
+            </div>
+          </div>
+        )}
 
-          <button
-            type="button"
-            onClick={toggleVoice}
-            className={`inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-3 text-xs font-semibold transition ${
-              voiceOn
-                ? "border-[#ececec] bg-white text-[#1f1f1f]"
-                : "border-[#ececec] bg-[#f7f7f7] text-[#8a8a8a]"
-            }`}
-            title={ttsAvailable ? "Toggle spoken replies" : "This browser has no speech synthesis"}
-            disabled={!ttsAvailable}
-          >
-            <Volume2 className={`h-4 w-4 ${voiceOn ? "text-[#c63a22]" : ""}`} />
-            {voiceOn ? "Voice on" : "Voice off"}
-          </button>
-        </div>
-
-        <form onSubmit={send} className="mt-3 flex items-center gap-2">
+        <form onSubmit={send} className="mt-4 flex items-center gap-2">
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={supported ? "Or type your question…" : "Type your question (voice input unavailable here)…"}
+            placeholder={supported ? "Or type your question..." : "Type your question (voice input unavailable here)..."}
             aria-label="Type a question for the care agent"
             className="min-w-0 flex-1 rounded-xl border border-[#e5e5e5] bg-white px-3.5 py-2.5 text-sm text-[#1f1f1f] outline-none transition focus:border-[#c63a22]"
           />
