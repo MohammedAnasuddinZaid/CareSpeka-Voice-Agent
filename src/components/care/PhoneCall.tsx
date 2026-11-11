@@ -210,6 +210,7 @@ export default function BrowserCall({
 }) {
   const [context, setContext] = useState<PortalContext | null>(null);
   const [loading, setLoading] = useState(true);
+  const [reloadKey, setReloadKey] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   // The call can be opened three ways: with an explicit ?session=... from a QR,
@@ -561,7 +562,14 @@ export default function BrowserCall({
     return () => {
       active = false;
     };
-  }, [activePair, activeSessionId, sessionReady]);
+  }, [activePair, activeSessionId, sessionReady, reloadKey]);
+
+  // Auto-start the call as soon as the session context is ready, so the patient
+  // does not have to tap "Start call" — the agent greets them immediately.
+  useEffect(() => {
+    if (loading || !activeSessionId || startedRef.current) return;
+    startCall();
+  }, [loading, activeSessionId, started, startCall]);
 
   // Keep the patient context fresh even before the call starts, so a phone that
   // was opened before the nurse linked a patient picks up the link quickly.
@@ -1287,6 +1295,13 @@ export default function BrowserCall({
       {loadError ? (
         <div className="m-4 flex flex-wrap items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> {loadError}
+          <button
+            type="button"
+            onClick={() => { setLoadError(null); setLoading(true); setReloadKey((k) => k + 1); }}
+            className="rounded-full border border-red-300 bg-white px-2.5 py-1 text-[11px] font-semibold hover:bg-red-100"
+          >
+            Retry
+          </button>
           {!activeSessionId ? (
             <a href="/nurse-view" className="rounded-full border border-red-300 bg-white px-2.5 py-1 text-[11px] font-semibold hover:bg-red-100">
               Open nurse portal

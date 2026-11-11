@@ -42,8 +42,18 @@ async function request<T>(
 
   let res: Response;
   try {
-    res = await fetch(path, { ...rest, headers, credentials: "include" });
-  } catch {
+    const hasWindow = typeof window !== "undefined";
+    const controller = hasWindow ? new AbortController() : null;
+    const timer = controller ? window.setTimeout(() => controller.abort(), 15_000) : null;
+    try {
+      res = await fetch(path, { ...rest, headers, credentials: "include", ...(controller ? { signal: controller.signal } : {}) });
+    } finally {
+      if (timer) window.clearTimeout(timer);
+    }
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new CareApiError("The care record took too long to respond. Check your connection and tap Retry.", 0, "timeout");
+    }
     throw new CareApiError("Network unavailable. Check your connection.", 0);
   }
   let data: unknown = null;
