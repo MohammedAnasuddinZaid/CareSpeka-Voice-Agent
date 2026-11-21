@@ -159,3 +159,4 @@ describe("session cookies", () => {
     expect(cleared).not.toContain("Secure");
   });
 });
+

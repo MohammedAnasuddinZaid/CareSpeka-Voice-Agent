@@ -546,3 +546,4 @@ def test_speak_ignores_empty_text_and_tts_failures():
     broken, broken_sent, _ = make_bridge(FakeEngine(tts=BrokenTTS()))
     run(broken._speak("Hello."))
     assert broken_sent == []
+

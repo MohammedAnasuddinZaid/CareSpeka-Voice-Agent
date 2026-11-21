@@ -117,3 +117,4 @@ compliance claims** and uses no home-grown cryptography.
 - No third-party penetration test has been performed.
 - No guarantee that a configured carrier is reachable; only a real, observed
   call proves that.
+

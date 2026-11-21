@@ -115,3 +115,4 @@ export function toCsv(entries: GestureLogEntry[]): string {
   );
   return [header.join(","), ...rows].join("\n");
 }
+

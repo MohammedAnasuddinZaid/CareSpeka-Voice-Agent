@@ -62,3 +62,4 @@ export async function POST(req: NextRequest) {
 
   return ok({ session: view, qrDataUrl, joinToken });
 }
+

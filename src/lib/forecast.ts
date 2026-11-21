@@ -185,3 +185,4 @@ export function bandRank(b: ForecastResult["band"]): number {
 export function trajectoryAlertText(f: ForecastResult): string {
   return `Deterioration trajectory ${f.score}/100 (${f.band}) — ${f.reasons.slice(0, 3).join("; ")}`;
 }
+

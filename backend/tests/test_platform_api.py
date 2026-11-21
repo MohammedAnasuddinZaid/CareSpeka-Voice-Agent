@@ -866,3 +866,4 @@ def test_overview_is_scoped_for_an_assigned_nurse(api, db):
     body = api.client.get("/api/platform/overview").json()
     assert {c["patient_id"] for c in body["active_calls"]} == {asha}
     assert_no_full_numbers(body)
+

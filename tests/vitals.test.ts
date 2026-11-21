@@ -37,3 +37,4 @@ describe("sanitizeVitals", () => {
     expect(sanitizeVitals("hack" as unknown as Record<string, never>)).toEqual({ sosActive: false });
   });
 });
+

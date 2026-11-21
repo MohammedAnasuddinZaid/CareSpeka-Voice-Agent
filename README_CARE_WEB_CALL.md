@@ -232,3 +232,4 @@ The existing Content-Security-Policy already allows `cdn.jsdelivr.net` (scripts)
 ## 11. Deployment
 
 See [`docs/CARE_WEB_CALL_DEPLOYMENT.md`](docs/CARE_WEB_CALL_DEPLOYMENT.md) for the Vercel walkthrough (Redis, TURN, domains, verifying persistence).
+

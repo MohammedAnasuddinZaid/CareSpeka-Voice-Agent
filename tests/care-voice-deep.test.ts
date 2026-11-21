@@ -330,3 +330,4 @@ describe("cooldown with Redis", () => {
     expect(redisState.state.setCalls).toEqual([]);
   });
 });
+

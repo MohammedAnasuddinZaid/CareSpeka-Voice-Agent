@@ -111,3 +111,4 @@ describe("care store — document + list semantics", () => {
     expect(await d.getList("k2")).toEqual([]);
   });
 });
+

@@ -128,3 +128,4 @@ export function clearSessionCookie(): string {
   const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
   return `${NURSE_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`;
 }
+

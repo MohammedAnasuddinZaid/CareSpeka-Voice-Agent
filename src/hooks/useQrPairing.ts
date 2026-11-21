@@ -61,3 +61,4 @@ export function useQrPairing(sessionId: string | undefined): PairStatus & { toke
 
   return { ...status, token, rotate };
 }
+

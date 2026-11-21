@@ -143,3 +143,4 @@ export default function ClinicianActions({ entries, onAcknowledge, onEscalate, o
     </div>
   );
 }
+

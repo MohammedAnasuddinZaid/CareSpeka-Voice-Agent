@@ -226,3 +226,4 @@ export function getPairSummary(session: string): {
     lastScanIp: scans[0]?.ip ?? null,
   };
 }
+

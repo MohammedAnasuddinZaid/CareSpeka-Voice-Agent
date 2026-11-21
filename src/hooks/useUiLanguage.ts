@@ -9,3 +9,4 @@ export function useUiLanguage(): SupportedLanguage {
   const lang = useSyncExternalStore(subscribeUiLanguage, getUiLanguageSnapshot, () => "en-US");
   return lang as SupportedLanguage;
 }
+

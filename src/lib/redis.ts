@@ -43,3 +43,4 @@ export function getRedis(): Redis {
 export function resetRedisForTests(): void {
   client = null;
 }
+

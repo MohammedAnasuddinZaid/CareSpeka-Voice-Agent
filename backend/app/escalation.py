@@ -229,3 +229,4 @@ def ack_escalation_severity(severity: str) -> int:
         return SEVERITY_RANK[EscalationSeverity(str(severity))]
     except (ValueError, KeyError):
         return 0
+

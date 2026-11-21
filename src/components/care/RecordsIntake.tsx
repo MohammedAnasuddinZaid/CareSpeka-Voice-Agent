@@ -711,3 +711,4 @@ function LoginCard({ onSignedIn }: { onSignedIn: (u: CareUser) => void }) {
     </div>
   );
 }
+

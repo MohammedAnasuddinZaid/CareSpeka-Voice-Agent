@@ -55,3 +55,4 @@ export function sanitizeVitals(v: RawVitals | null | undefined): SanitizedVitals
     sosActive: !!v.sosActive,
   };
 }
+

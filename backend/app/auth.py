@@ -257,3 +257,4 @@ def seed_default_users() -> dict[str, Any]:
         )
         result["created"].append("nurse.demo")
     return result
+

@@ -401,3 +401,4 @@ describe("fetchPairStatus", () => {
     expect(await fetchPairStatus("AB12", "t")).toBeNull();
   });
 });
+

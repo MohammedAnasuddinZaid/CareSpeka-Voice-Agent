@@ -98,3 +98,4 @@ describe("getRedis", () => {
     expect(redisCtor).toHaveBeenCalledTimes(2);
   });
 });
+

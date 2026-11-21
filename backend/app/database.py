@@ -2030,3 +2030,4 @@ def purge_older_than(days: int) -> dict[str, int]:
             removed[table] = cur.rowcount
     return removed
 
+

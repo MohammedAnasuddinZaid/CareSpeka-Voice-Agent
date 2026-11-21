@@ -69,3 +69,4 @@ class CareCaptureProcessor extends AudioWorkletProcessor {
 }
 
 registerProcessor("care-capture", CareCaptureProcessor);
+

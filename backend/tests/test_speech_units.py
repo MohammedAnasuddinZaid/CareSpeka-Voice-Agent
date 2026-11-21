@@ -681,3 +681,4 @@ async def test_shutdown_unloads_the_engine():
     tts.engine = object()
     await tts.shutdown()
     assert tts.engine is None
+

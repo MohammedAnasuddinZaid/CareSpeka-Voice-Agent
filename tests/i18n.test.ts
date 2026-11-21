@@ -113,3 +113,4 @@ describe("reactive language store", () => {
     expect(second).toHaveBeenCalledTimes(2);
   });
 });
+

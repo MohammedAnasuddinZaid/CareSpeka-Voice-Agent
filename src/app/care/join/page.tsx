@@ -14,3 +14,4 @@ export default async function CareJoinPage({
   const params = await searchParams;
   return <PatientJoin token={params.t ?? null} />;
 }
+

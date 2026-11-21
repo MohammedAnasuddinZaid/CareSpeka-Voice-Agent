@@ -24,3 +24,4 @@ export async function PATCH(req: NextRequest) {
   if (!updated) return fail("Task not found.", 404);
   return ok({ tasks: await listTasks() });
 }
+

@@ -39,3 +39,4 @@ export async function authorizeSession(
   if (pair && (await verifyPairTokenPersistent(session, pair))) return { allowed: true };
   return { allowed: false };
 }
+

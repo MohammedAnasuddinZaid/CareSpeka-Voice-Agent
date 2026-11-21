@@ -649,3 +649,4 @@ export function quickAnswer(input: QuickAnswerInput): QuickAnswer | null {
 
   return null;
 }
+

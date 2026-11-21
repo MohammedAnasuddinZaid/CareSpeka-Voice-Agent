@@ -39,3 +39,4 @@ export function newestVitals(
   }
   return best ?? null;
 }
+

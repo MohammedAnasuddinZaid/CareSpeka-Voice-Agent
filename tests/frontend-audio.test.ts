@@ -437,3 +437,4 @@ describe("startAlarm / stopAlarm", () => {
     expect(() => stopAlarm()).not.toThrow();
   });
 });
+

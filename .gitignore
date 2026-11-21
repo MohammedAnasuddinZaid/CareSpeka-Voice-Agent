@@ -22,3 +22,4 @@ backend/*.json
 
 # Web Voice Call — Demo local persistence (never commit session data)
 .care-data/
+

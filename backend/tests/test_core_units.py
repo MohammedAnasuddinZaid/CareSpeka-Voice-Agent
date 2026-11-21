@@ -592,3 +592,4 @@ def test_whisper_health_shape():
     health = WhisperASR().health()
     assert set(health) >= {"binary", "backend", "model", "running", "error"}
     assert isinstance(health["model_exists"], bool)
+

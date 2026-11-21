@@ -170,3 +170,4 @@ describe("retrieval against the knowledge base", () => {
     expect(result.strong).toBe(false);
   });
 });
+

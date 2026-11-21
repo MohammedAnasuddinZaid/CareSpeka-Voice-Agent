@@ -188,3 +188,4 @@ class MockProvider(TelephonyProvider):
     def simulate_end(self, provider_call_id: str, state: str = "completed") -> None:
         if provider_call_id in self.calls:
             self.calls[provider_call_id]["state"] = state
+

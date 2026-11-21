@@ -353,3 +353,4 @@ describe("patient message repository", () => {
     expect(messages[0].readAt).toBeTruthy();
   });
 });
+

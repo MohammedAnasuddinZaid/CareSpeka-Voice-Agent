@@ -283,3 +283,4 @@ describe("makeQrDataUrl", () => {
 
 // Keeps the helper referenced in case future cases need it without a lint error.
 void listSessions;
+

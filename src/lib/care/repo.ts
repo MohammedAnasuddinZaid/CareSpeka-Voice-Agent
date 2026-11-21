@@ -961,3 +961,4 @@ export async function unlinkSessionPatient(sessionId: string): Promise<void> {
   await d.del(K.sessionLink(key));
   await d.setDoc(K.sessionUnlinked(key), true);
 }
+

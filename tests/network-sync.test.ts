@@ -669,3 +669,4 @@ describe("same-device broadcasts", () => {
     sync.destroy();
   });
 });
+

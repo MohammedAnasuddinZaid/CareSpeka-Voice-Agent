@@ -120,3 +120,4 @@ def idempotency_key(*parts: Any) -> str:
 
 def signature_for(secret: str, body: bytes) -> str:
     return hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+

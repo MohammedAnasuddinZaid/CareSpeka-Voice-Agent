@@ -66,3 +66,4 @@ export async function GET(req: NextRequest) {
   const signals = await listSignals(session.id, role, Number.isFinite(since) ? since : 0);
   return ok({ signals, role });
 }
+

@@ -9,3 +9,4 @@ export async function makeQrDataUrl(text: string): Promise<string> {
     color: { dark: "#0f172a", light: "#ffffff" },
   });
 }
+

@@ -74,3 +74,4 @@ async function loadReport(session: CareSession): Promise<CareReport | null> {
   }
   return getReportBySession(session.id);
 }
+

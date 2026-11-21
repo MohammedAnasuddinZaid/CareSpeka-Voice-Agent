@@ -34,3 +34,4 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
 
   return ok({ session: view, qrDataUrl, joinToken: regenerated.joinToken });
 }
+

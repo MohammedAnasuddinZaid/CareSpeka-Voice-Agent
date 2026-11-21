@@ -98,3 +98,4 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   lastSent.set(key, now);
   return NextResponse.json({ ok: true, provider: "logging-only", dispatched: contacts.length });
 }
+

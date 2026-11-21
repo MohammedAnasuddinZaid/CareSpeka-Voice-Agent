@@ -197,3 +197,4 @@ describe("sanitizeVitals / clampFinite", () => {
     expect(clampFinite(7, 0, 10)).toBe(7);
   });
 });
+

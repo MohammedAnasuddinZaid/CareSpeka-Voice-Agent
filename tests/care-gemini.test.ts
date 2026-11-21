@@ -350,3 +350,4 @@ describe("failure and retry handling", () => {
     expect(await geminiGenerate({ system: "s", prompt: "p" })).toBeNull();
   });
 });
+

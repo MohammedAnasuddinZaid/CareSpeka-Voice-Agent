@@ -153,3 +153,4 @@ describe("newestVitals", () => {
     expect(newestVitals(map)).toBe(map.a);
   });
 });
+

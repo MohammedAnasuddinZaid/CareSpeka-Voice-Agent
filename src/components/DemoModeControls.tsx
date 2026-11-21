@@ -153,3 +153,4 @@ export default function DemoModeControls({ onSimulateGesture, gestureType }: Dem
     </div>
   );
 }
+

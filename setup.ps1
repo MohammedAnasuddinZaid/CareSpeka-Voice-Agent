@@ -191,3 +191,4 @@ Write-Host 'Setup complete. Downloaded models and local certificates stay on thi
 Write-Host "Phone address: https://$($localAddresses[0]):3443/voicelink"
 Write-Host "Phone certificate: http://$($localAddresses[0]):3080/ca.crt"
 Write-Host 'Next: run .\start.ps1. The phone and PC must share a private Wi-Fi network.'
+

@@ -451,3 +451,4 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
     stopCamera,
   };
 }
+

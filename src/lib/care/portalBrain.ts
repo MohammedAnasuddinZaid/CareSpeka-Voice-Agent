@@ -1649,3 +1649,4 @@ export function voiceOpening(ctx: PortalContext): string {
   );
   return parts.join(" ");
 }
+

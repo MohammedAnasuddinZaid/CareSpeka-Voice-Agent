@@ -33,3 +33,4 @@ describe("analytics hardening", () => {
     expect(eveningToday.some((r) => r.date === localKey)).toBe(true);
   });
 });
+

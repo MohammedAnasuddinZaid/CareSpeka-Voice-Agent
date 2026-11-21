@@ -134,3 +134,4 @@ The demo is additive and self-contained:
 Removing these paths (and the two nav entries in `src/components/Navbar.tsx` / `src/app/layout.tsx`) removes the feature without touching the Python/FastAPI backend, the telephony adapters, or any existing CareSpeak page.
 
 The only shared-file edit is `src/app/voicelink/layout.tsx`, which marks the pre-existing client-only `/voicelink` route dynamic so `next build` succeeds under Next 15.5 — behaviour is unchanged.
+

@@ -513,3 +513,4 @@ export function getReports(): Promise<{
 }> {
   return get("/api/platform/reports");
 }
+

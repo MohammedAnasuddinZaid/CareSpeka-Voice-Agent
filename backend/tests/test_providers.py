@@ -654,3 +654,4 @@ def test_exotel_status_maps_are_total():
     assert _map_exotel_sms_status("rejected") == "failed"
     assert _map_exotel_sms_status("invalid") == "failed"
     assert _map_exotel_sms_status("mystery") == "unknown"
+

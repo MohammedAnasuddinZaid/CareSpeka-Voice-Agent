@@ -291,3 +291,4 @@ export const GESTURE_COLORS: Record<string, string> = {
   HELLO: "#8b5cf6",
   SYSTEM: "#6e6e6e",
 };
+

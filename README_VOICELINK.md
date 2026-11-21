@@ -244,3 +244,4 @@ VoiceLink is part of CareSpeak (MIT). Third-party components keep their own
 licenses: whisper.cpp and Silero VAD are MIT, sherpa-onnx and the VITS-LJS model
 card are Apache-2.0, qwen2.5:3b is Apache-2.0. See
 [`ZERO_COST_POLICY.md`](ZERO_COST_POLICY.md).
+

@@ -142,3 +142,4 @@ export default function PainScaleOverlay({ state, gesture, onConfirm, onCancel, 
     </AnimatePresence>
   );
 }
+

@@ -178,3 +178,4 @@ class AudioFormat:
         if self.encoding == "alaw":
             return pcm16_to_alaw(resampled)
         return resampled
+

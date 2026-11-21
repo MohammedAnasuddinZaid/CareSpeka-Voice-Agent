@@ -76,3 +76,4 @@ export async function GET(): Promise<NextResponse> {
 
   return NextResponse.json({ sessions: rows, serverTime: Date.now() }, { headers: { "Cache-Control": "no-store" } });
 }
+

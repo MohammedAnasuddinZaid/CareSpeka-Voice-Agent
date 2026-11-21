@@ -174,3 +174,4 @@ export default function PatientMetricsCard({ metrics, deviceName = "Patient Devi
     </motion.div>
   );
 }
+

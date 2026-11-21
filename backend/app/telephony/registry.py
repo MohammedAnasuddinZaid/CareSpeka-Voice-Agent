@@ -130,3 +130,4 @@ def _mode_label(mode: Optional[str]) -> str:
         MODE_UNAVAILABLE: "Provider unavailable",
         MODE_DISABLED: "Calls disabled - credentials or compliance missing",
     }.get(mode or "", "Unknown telephony mode")
+

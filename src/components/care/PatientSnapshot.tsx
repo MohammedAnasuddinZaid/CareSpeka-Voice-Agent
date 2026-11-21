@@ -240,3 +240,4 @@ export default function PatientSnapshot({ patient, records, className = "" }: Pa
     </div>
   );
 }
+

@@ -1165,3 +1165,4 @@ function fmtSeconds(ms: number | undefined): string {
 function fmtMovement(n: number | undefined): string {
   return n == null || !Number.isFinite(n) ? "—" : `${Math.round(n * 100)}%`;
 }
+

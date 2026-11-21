@@ -290,3 +290,4 @@ export function useCareRtc(opts: CareRtcOptions): CareRtcHandle {
 
   return { status, pcState, iceState, error, sendData, addTrack, restart };
 }
+

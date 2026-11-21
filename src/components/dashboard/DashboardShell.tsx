@@ -275,3 +275,4 @@ function LoginCard({ onSignedIn }: { onSignedIn: (user: SessionUser) => void }) 
     </div>
   );
 }
+

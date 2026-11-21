@@ -123,3 +123,4 @@ load/self-test, VAD load).
   local models on real text or real synthesized speech.
 - **No medical claim.** Latency is measured for a demo care assistant; it is not
   a clinical SLA.
+

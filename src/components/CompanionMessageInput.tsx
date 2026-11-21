@@ -67,3 +67,4 @@ export default function CompanionMessageInput({ onSend }: { onSend: (text: strin
     </div>
   );
 }
+

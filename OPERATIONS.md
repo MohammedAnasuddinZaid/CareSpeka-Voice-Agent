@@ -119,3 +119,4 @@ D:\voicelink-tools\cloudflared.exe tunnel --url http://127.0.0.1:8000 `
 VoiceLink’s AI is an assistant, not a nurse and not an emergency service. It does
 not provide a diagnosis or emergency dispatch. Immediate danger is routed to the
 configured emergency number. See [`SECURITY.md`](SECURITY.md).
+

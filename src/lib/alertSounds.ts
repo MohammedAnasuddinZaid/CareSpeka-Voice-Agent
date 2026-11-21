@@ -54,3 +54,4 @@ export function playAlertSound(gestureName: string): void {
   oscillator.start(ctx.currentTime);
   oscillator.stop(ctx.currentTime + duration / 1000);
 }
+

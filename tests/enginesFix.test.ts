@@ -90,3 +90,4 @@ describe("forecast maths (damped Holt + despike + noise gate)", () => {
     expect(detected).toBe(true);
   });
 });
+

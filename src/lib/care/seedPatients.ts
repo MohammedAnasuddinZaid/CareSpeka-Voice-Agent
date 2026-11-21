@@ -564,3 +564,4 @@ export const SYNTHETIC_ADDITION_IDS = new Set([
 export function getSeedPatient(id: string): ClinicalPatient | undefined {
   return SYNTHETIC_PATIENTS.find((p) => p.id === id);
 }
+

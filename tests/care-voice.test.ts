@@ -379,3 +379,4 @@ describe("creating a patient", () => {
     expect(created.displayName).toBe("Unnamed patient");
   });
 });
+
