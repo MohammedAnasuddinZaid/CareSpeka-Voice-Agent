@@ -191,3 +191,4 @@ describe("prefetch behaviour", () => {
     expect(forVisionTasks).toHaveBeenCalledTimes(1);
   });
 });
+

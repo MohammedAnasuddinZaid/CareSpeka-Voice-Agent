@@ -14,3 +14,4 @@ export async function GET(req: NextRequest) {
   const entries = await listAudit(Number.isFinite(limit) ? Math.min(limit, 1000) : 200);
   return ok({ audit: patientId ? entries.filter((e) => e.patientId === patientId) : entries });
 }
+

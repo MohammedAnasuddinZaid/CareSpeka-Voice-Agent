@@ -376,3 +376,4 @@ export async function clearCooldown(key: string): Promise<void> {
     // Redis unavailable — the in-process entry is already gone.
   }
 }
+

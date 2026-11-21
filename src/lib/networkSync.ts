@@ -471,3 +471,4 @@ export function createNetworkSync(config: NetworkSyncConfig): NetworkSync {
   sync.connect();
   return sync;
 }
+

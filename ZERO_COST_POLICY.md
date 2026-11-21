@@ -66,3 +66,4 @@ paid integration. It is deliberately out of scope here rather than faked.
 | Commercial voice cloning | Paid license | No — VITS-LJS is licensed for this use |
 
 None of these is used, installed, or required by the current code.
+

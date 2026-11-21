@@ -483,3 +483,4 @@ describe("VoiceAlert fallbacks and stop", () => {
     expect(spoken).toHaveLength(0);
   });
 });
+

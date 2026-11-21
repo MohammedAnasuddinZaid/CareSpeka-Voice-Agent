@@ -205,3 +205,4 @@ class TelephonyProvider(ABC):
             "ok": self.is_configured(),
             "operating_mode": self.operating_mode(),
         }
+

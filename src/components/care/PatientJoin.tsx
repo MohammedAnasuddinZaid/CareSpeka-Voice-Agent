@@ -388,3 +388,4 @@ function NurseMessages({ messages }: { messages: PatientMessage[] }) {
     </div>
   );
 }
+

@@ -37,3 +37,4 @@ foreach ($process in Get-CimInstance Win32_Process -ErrorAction SilentlyContinue
 }
 
 exit 0
+

@@ -1026,3 +1026,4 @@ def _patient_contact(patient_id: int, contact_id: Optional[int]) -> Optional[dic
         if contact.get("role") == "patient":
             return contact
     return contacts[0]
+

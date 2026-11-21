@@ -13,3 +13,4 @@ export const dynamic = "force-dynamic";
 export default function VoiceLinkLayout({ children }: { children: ReactNode }) {
   return children;
 }
+

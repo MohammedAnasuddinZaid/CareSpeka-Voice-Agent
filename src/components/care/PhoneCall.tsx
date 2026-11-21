@@ -564,13 +564,6 @@ export default function BrowserCall({
     };
   }, [activePair, activeSessionId, sessionReady, reloadKey]);
 
-  // Auto-start the call as soon as the session context is ready, so the patient
-  // does not have to tap "Start call" — the agent greets them immediately.
-  useEffect(() => {
-    if (loading || !activeSessionId || startedRef.current) return;
-    startCall();
-  }, [loading, activeSessionId, started, startCall]);
-
   // Keep the patient context fresh even before the call starts, so a phone that
   // was opened before the nurse linked a patient picks up the link quickly.
   useEffect(() => {
@@ -687,8 +680,14 @@ export default function BrowserCall({
       });
   }, [activeSessionId, append, context, resumeListening, speakLine]);
 
+  // Auto-start the call as soon as the session context is ready, so the patient
+  // does not have to tap "Start call" — the agent greets them immediately.
+  useEffect(() => {
+    if (loading || !activeSessionId || startedRef.current) return;
+    startCall();
+  }, [loading, activeSessionId, started, startCall]);
+
   const endCall = useCallback(() => {
-    startedRef.current = false;
     wantMicRef.current = false;
     speechGenRef.current += 1;
     speakingRef.current = false;
@@ -1524,3 +1523,4 @@ export default function BrowserCall({
     </section>
   );
 }
+

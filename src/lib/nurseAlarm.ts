@@ -86,3 +86,4 @@ export function stopAlarm(): void {
     } catch {}
   }, 200);
 }
+

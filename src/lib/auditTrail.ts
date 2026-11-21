@@ -116,3 +116,4 @@ export function auditToCsv(events: AuditEvent[]): string {
 function formatCitationShort(c: Citation): string {
   return `${c.docId}\u00a7${c.section}`;
 }
+

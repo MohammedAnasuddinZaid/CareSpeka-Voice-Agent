@@ -30,3 +30,4 @@ export async function GET(req: NextRequest) {
 
   return ok({ url: link, qrDataUrl: await makeQrDataUrl(link) });
 }
+

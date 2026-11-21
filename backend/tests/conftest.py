@@ -52,3 +52,4 @@ def clean_db():
 
     database.init_db()
     return database
+

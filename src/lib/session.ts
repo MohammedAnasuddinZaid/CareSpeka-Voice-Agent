@@ -172,3 +172,4 @@ export function getNurseDashboardUrl(sessionId: string): string {
   if (typeof window === "undefined") return "";
   return `${getDashboardOrigin()}/nurse-view?session=${sessionId}`;
 }
+

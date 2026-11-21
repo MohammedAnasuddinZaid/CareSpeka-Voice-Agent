@@ -490,3 +490,4 @@ export function unknownAnswer(patient?: ClinicalPatient | null): string {
   const name = patient?.displayName ?? "this patient";
   return `I don't have a grounded answer to that in ${name}'s record, and I don't want to guess. I can search the inserted notes and call history again, or you can ask a general care question such as "what are the warning signs of sepsis?" or "what is a normal adult respiratory rate?".`;
 }
+

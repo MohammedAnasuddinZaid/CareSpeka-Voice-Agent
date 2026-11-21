@@ -82,3 +82,4 @@ export async function fetchPairStatus(sessionId: string, token: string): Promise
     return null;
   }
 }
+

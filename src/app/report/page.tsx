@@ -297,3 +297,4 @@ function downloadCsv(log: GestureLogEntry[]) {
   a.click();
   URL.revokeObjectURL(url);
 }
+

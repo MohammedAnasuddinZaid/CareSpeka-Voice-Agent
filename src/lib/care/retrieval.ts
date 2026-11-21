@@ -759,3 +759,4 @@ export function evidenceAnswer(passages: RetrievedPassage[], max = 2): string {
   });
   return `From the record: ${parts.join(" Also: ")}`;
 }
+

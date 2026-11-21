@@ -79,3 +79,4 @@ export function citationPassage(c: Citation): string {
   if (!doc) return "";
   return `${doc.title} (${doc.publisher}, ${doc.year}) §${c.section}: ${doc.sections[c.section] ?? ""}`;
 }
+

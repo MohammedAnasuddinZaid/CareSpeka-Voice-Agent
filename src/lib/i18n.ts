@@ -561,3 +561,4 @@ export function getUiLanguageSnapshot(): string {
 export function notifyUiLanguageChanged(): void {
   for (const cb of langListeners) cb();
 }
+

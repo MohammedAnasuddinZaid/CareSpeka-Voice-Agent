@@ -271,3 +271,4 @@ class PushToTalkBuffer:
     @property
     def duration_ms(self) -> int:
         return int(self._size * 1000 / SAMPLE_RATE)
+

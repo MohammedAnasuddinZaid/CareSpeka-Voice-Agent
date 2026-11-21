@@ -307,3 +307,4 @@ export function reportFacts(patient: ClinicalPatient | null, entries: CareTransc
 
   return { symptoms, history, medications, allergies, concerns, escalations };
 }
+

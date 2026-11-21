@@ -325,3 +325,4 @@ export default function QRPairingDisplay({ sessionId, compact = false }: QRPairi
     </motion.div>
   );
 }
+

@@ -108,3 +108,4 @@ def build_messages(
     messages.extend(reversed(selected))
     messages.append({"role": "user", "content": user_text})
     return messages
+

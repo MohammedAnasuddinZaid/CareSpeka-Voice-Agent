@@ -136,3 +136,4 @@ describe("durable pairing layer", () => {
     expect(await verifyPairTokenPersistent("bed1", "new")).toBe(true);
   });
 });
+

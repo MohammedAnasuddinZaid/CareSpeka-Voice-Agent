@@ -146,3 +146,4 @@ def country_code(value: str | None) -> str:
 
 def redact_for_log(value: str | None) -> str:
     return mask(value)
+

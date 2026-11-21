@@ -422,3 +422,4 @@ def test_scheduler_tick_processes_due_jobs(clean_db):
     assert processed >= 1
     assert job["id"] in done
     assert clean_db.get_job(job["id"])["state"] == "done"
+

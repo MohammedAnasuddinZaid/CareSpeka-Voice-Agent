@@ -61,3 +61,4 @@ was not compiled or benchmarked here.
 VoiceLink needs no GPU, no cloud instance, no telephony hardware, no SIP trunk,
 no separate microphone, and no paid service. A 6 GB laptop GPU is more than
 enough when free; the CPU fallback is what was tested.
+

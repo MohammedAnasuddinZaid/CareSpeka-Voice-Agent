@@ -57,3 +57,4 @@ Write-Host "Phone:   https://$lanIp`:3443/voicelink"
 Write-Host "CA file: http://$lanIp`:3080/ca.crt"
 Write-Host 'Phone and PC must share a private Wi-Fi network. Install the local CA on the phone once.'
 Write-Host 'Run .\health-check.ps1 after startup; run .\stop.ps1 to stop processes started here.'
+

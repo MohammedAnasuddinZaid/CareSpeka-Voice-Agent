@@ -121,3 +121,4 @@ export function useLiveSync({ sessionId, enabled = true, onAlert, onReply }: Use
 
   return { syncRef, status, transport, driver, remoteMetrics, vitals, latestReply, sendAlert, sendAction, sendReply, sendPatientMetrics };
 }
+

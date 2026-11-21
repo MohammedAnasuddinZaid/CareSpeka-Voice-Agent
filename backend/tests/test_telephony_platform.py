@@ -889,3 +889,4 @@ def test_session_cookie_is_secure_only_behind_tls(clean_db):
     )
     assert proxied.status_code == 200, proxied.text
     assert "secure" in proxied.headers.get("set-cookie", "").lower()
+

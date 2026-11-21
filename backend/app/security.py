@@ -238,3 +238,4 @@ def assert_local_service_url(url: str) -> None:
 
 
 assert_local_service_url(settings.ollama_url)
+

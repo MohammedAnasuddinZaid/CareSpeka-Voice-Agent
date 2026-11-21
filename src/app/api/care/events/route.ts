@@ -68,3 +68,4 @@ export async function GET(req: NextRequest) {
   const events = await listEvents(session.id, Number.isFinite(since) ? since : 0);
   return ok({ events });
 }
+

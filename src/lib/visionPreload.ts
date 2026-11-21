@@ -56,3 +56,4 @@ export function preloadVisionAssets(kind: VisionKind): void {
     } catch {}
   });
 }
+

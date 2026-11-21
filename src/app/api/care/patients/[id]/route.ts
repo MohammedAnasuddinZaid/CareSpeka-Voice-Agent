@@ -38,3 +38,4 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
   if (!ok_) return fail("Patient not found.", 404);
   return ok({ deleted: id });
 }
+

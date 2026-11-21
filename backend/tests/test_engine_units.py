@@ -314,3 +314,4 @@ async def test_shutdown_cancels_pending_background_tasks(engine):
     await engine.shutdown()
     assert task.cancelled() is True
     assert engine.asr.shutdowns == 1
+

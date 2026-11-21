@@ -50,3 +50,4 @@ describe("forecastDeterioration", () => {
     expect(Object.values(f.projected).every((v) => Number.isFinite(v))).toBe(true);
   });
 });
+

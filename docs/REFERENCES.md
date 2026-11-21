@@ -60,3 +60,4 @@ This document compiles all clinical guidelines, academic research papers, algori
 
 ### Low-Cost IoT Wearable Telemetry (ESP32 & MAX30102)
 - **Citation:** Open hardware reference design using Espressif ESP32 Wi-Fi/BLE Microcontrollers and Maxim Integrated MAX30102 pulse oximetry sensors for continuous photoplethysmography (PPG) heart rate and SpO₂ monitoring at an estimated BOM cost under ₹1,100 per bed (`HARDWARE.md`, `firmware/carespeak_esp32.ino`).
+

@@ -260,3 +260,4 @@ describe("careSystemPrompt", () => {
     expect(prompt).not.toContain("Care plan:");
   });
 });
+

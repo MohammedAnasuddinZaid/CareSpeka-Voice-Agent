@@ -148,3 +148,4 @@ def session_secret() -> str:
 def secret_status() -> dict[str, Any]:
     values = load_all()
     return {name: bool(values.get(name)) for name in sorted(KNOWN_SECRETS)}
+

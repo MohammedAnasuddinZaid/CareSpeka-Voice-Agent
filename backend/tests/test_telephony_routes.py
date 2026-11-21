@@ -413,3 +413,4 @@ def test_media_stream_without_a_secret_accepts_the_connection(client, monkeypatc
         ws.send_json(_start_payload())
         ws.send_json({"event": "stop"})
     assert FakeBridge.instances[0].started is True
+

@@ -333,3 +333,4 @@ export class VoiceAlert {
 }
 
 export const voiceAlert = new VoiceAlert(4000);
+

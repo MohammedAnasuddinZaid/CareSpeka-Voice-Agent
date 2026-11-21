@@ -456,3 +456,4 @@ export function careSystemPrompt(patient: {
     .filter(Boolean)
     .join("\n");
 }
+

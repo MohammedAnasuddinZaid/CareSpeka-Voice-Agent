@@ -28,3 +28,4 @@ export function formatRelativeTime(ts: number, now = Date.now()): string {
 export function stripGesturePrefix(description: string): string {
   return description.replace(/^[^—]*—\s*/, "");
 }
+

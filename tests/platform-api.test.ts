@@ -181,3 +181,4 @@ describe("login", () => {
     expect(await login("ward", "pw")).toMatchObject({ id: 3, role: "nurse" });
   });
 });
+

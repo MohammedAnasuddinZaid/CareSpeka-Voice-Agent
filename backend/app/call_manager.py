@@ -1048,3 +1048,4 @@ class CallManager:
                 session, reason="server_shutdown", notify=False, status="shutdown"
             )
         self.sessions.clear()
+

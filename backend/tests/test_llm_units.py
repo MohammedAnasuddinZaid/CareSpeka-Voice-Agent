@@ -307,3 +307,4 @@ async def test_shutdown_without_a_client_is_safe():
     client = OllamaClient()
     await client.shutdown()
     assert client._client is None
+

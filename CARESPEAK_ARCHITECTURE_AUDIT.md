@@ -98,3 +98,4 @@ app does not start VoiceLink.
 - Not multi-tenant: the SQLite store and the gateway are single-household LAN
   scoped, which matches the ₹0, on-device requirement.
 - No cloud sync of VoiceLink data, by design.
+

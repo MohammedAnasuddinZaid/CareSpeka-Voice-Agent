@@ -42,3 +42,4 @@ def test_call_state_machine_terminal_state_rejects_reuse():
     assert manager.transition(CallState.LISTENING)
     assert manager.transition(CallState.ENDED)
     assert not manager.transition(CallState.LISTENING)
+

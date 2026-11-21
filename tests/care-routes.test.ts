@@ -123,3 +123,4 @@ describe("/api/care/phone/qr", () => {
     expect(body.qrDataUrl.startsWith("data:image/png;base64,")).toBe(true);
   });
 });
+

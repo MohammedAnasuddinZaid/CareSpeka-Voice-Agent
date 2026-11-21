@@ -858,3 +858,4 @@ def public_escalation(record: Optional[dict[str, Any]]) -> dict[str, Any]:
 _public_call = public_call
 _public_message = public_message
 _public_escalation = public_escalation
+

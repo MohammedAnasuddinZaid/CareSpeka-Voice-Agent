@@ -146,3 +146,4 @@ export function subscribeToGestureUpdates(handlers: GestureUpdateHandlers): () =
   channel.addEventListener("message", handler);
   return () => channel.removeEventListener("message", handler);
 }
+

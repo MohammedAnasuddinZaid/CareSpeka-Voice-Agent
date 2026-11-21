@@ -258,3 +258,4 @@ describe("point math sanity", () => {
     expect(Array.from([p(1), p(2)]).length).toBe(2);
   });
 });
+

@@ -372,3 +372,4 @@ describe("session → patient link", () => {
 // Keep the unused type import meaningful for future report fixtures.
 export type _Report = CareReport;
 export type _Message = PatientMessage;
+

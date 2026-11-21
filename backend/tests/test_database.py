@@ -1023,3 +1023,4 @@ def test_seed_default_users_is_idempotent(db):
     assert "admin" not in second["created"]
     assert "nurse.demo" not in second["created"]
     assert first["credentials_path"] or True  # path only exists on first creation
+

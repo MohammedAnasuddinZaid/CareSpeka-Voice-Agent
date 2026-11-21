@@ -22,3 +22,4 @@ export async function GET(): Promise<NextResponse> {
     serverTime: Date.now(),
   });
 }
+

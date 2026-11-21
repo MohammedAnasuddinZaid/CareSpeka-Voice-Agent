@@ -8,3 +8,4 @@ python-multipart==0.0.32
 python-dotenv==1.2.4
 websockets==16.1.1
 pytest==9.2.0
+

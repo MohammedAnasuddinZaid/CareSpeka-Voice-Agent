@@ -222,3 +222,4 @@ describe("background sync", () => {
     expect(() => requestBackgroundSync()).not.toThrow();
   });
 });
+

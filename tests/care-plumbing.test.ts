@@ -315,3 +315,4 @@ describe("session helpers in a server (no-window) context", () => {
     expect(getNurseDashboardUrl("AB12CD")).toBe("");
   });
 });
+

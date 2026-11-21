@@ -721,3 +721,4 @@ def test_public_call_hides_internal_metadata():
     assert "metadata_json" not in public
     assert public["metadata"] == {"requested_by": "nurse"}
     assert _public_call(None) == {}
+

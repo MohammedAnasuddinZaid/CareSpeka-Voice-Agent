@@ -251,3 +251,4 @@ class WhisperASR:
                 settings.whisper_pid_path.unlink()
         except OSError:
             pass
+

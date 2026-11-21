@@ -102,3 +102,4 @@ export default function RiskAttribution({ risk }: { risk: RiskAssessment }) {
     </div>
   );
 }
+

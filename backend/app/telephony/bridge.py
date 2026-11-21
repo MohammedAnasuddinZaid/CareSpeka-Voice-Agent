@@ -386,3 +386,4 @@ def _take_sentence(buffer: str) -> tuple[Optional[str], str]:
             cut = 220
         return buffer[:cut].strip(), buffer[cut:]
     return None, buffer
+

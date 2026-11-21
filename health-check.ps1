@@ -38,3 +38,4 @@ if ($health.status -ne 'ready') {
     exit 1
 }
 Write-Host 'All required local services are ready.' -ForegroundColor Green
+

@@ -309,3 +309,4 @@ def test_push_to_talk_start_clears_previous_audio():
     buffer.start()
     assert buffer.duration_ms == 0
     assert buffer.finish().size == 0
+

@@ -29,3 +29,4 @@ export async function POST(req: NextRequest) {
     headers: { "Content-Type": "application/json", "Set-Cookie": clearSessionCookie() },
   });
 }
+

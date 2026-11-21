@@ -695,3 +695,4 @@ function RecentEscalations({ escalations }: { escalations: PatientDetail["escala
     </Panel>
   );
 }
+

@@ -423,3 +423,4 @@ def test_mock_parse_event_normalises_payload():
     # A hint is used when the payload carries no kind.
     hinted = MockProvider().parse_event({}, kind_hint="media.start")
     assert hinted.kind == "media.start"
+

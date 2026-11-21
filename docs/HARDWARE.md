@@ -97,3 +97,4 @@ alerts queue in IndexedDB and flush automatically when connectivity returns.
 6. Turn off WiFi on the patient device → make gestures → reconnect → alerts flush
    automatically (offline-first proof).
 7. Open `/report` → print-ready clinical shift summary.
+
